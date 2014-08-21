@@ -4,6 +4,7 @@ obj/
 /ICSharpCode.Decompiler/Properties/AssemblyInfo.cs
 /ILSpy/Properties/AssemblyInfo.cs
 /ILSpy/app.config
+/ILSpy/publish
 *.suo
 *.user
 /Resharper-ILSpy-Style.xml
