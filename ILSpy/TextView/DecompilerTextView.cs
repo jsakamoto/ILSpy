@@ -94,6 +94,7 @@ namespace ICSharpCode.ILSpy.TextView
 			textEditor.Options.RequireControlModifierForHyperlinkClick = false;
 			textEditor.TextArea.TextView.MouseHover += TextViewMouseHover;
 			textEditor.TextArea.TextView.MouseHoverStopped += TextViewMouseHoverStopped;
+			textEditor.TextArea.TextView.MouseDown += TextViewMouseDown;
 			textEditor.SetBinding(Control.FontFamilyProperty, new Binding { Source = DisplaySettingsPanel.CurrentDisplaySettings, Path = new PropertyPath("SelectedFont") });
 			textEditor.SetBinding(Control.FontSizeProperty, new Binding { Source = DisplaySettingsPanel.CurrentDisplaySettings, Path = new PropertyPath("SelectedFontSize") });
 			
@@ -102,10 +103,12 @@ namespace ICSharpCode.ILSpy.TextView
 			textEditor.TextArea.TextView.LineTransformers.Add(textMarkerService);
 			textEditor.ShowLineNumbers = true;
 			DisplaySettingsPanel.CurrentDisplaySettings.PropertyChanged += CurrentDisplaySettings_PropertyChanged;
+
+			// SearchPanel
+			SearchPanel.Install(textEditor.TextArea)
+				.RegisterCommands(Application.Current.MainWindow.CommandBindings);
 			
 			// Bookmarks context menu
-			textEditor.TextArea.DefaultInputHandler.NestedInputHandlers.Add(new SearchInputHandler(textEditor.TextArea));
-			
 			ShowLineMargin();
 			
 			// add marker service & margin
@@ -187,13 +190,17 @@ namespace ICSharpCode.ILSpy.TextView
 				}
 				XmlDocRenderer renderer = new XmlDocRenderer();
 				renderer.AppendText(MainWindow.Instance.CurrentLanguage.GetTooltip(mr));
-				XmlDocumentationProvider docProvider = XmlDocLoader.LoadDocumentation(mr.Module);
-				if (docProvider != null) {
-					string documentation = docProvider.GetDocumentation(XmlDocKeyProvider.GetKey(mr));
-					if (documentation != null) {
-						renderer.AppendText(Environment.NewLine);
-						renderer.AddXmlDocumentation(documentation);
+				try {
+					XmlDocumentationProvider docProvider = XmlDocLoader.LoadDocumentation(mr.Module);
+					if (docProvider != null) {
+						string documentation = docProvider.GetDocumentation(XmlDocKeyProvider.GetKey(mr));
+						if (documentation != null) {
+							renderer.AppendText(Environment.NewLine);
+							renderer.AddXmlDocumentation(documentation);
+						}
 					}
+				} catch (XmlException) {
+					// ignore
 				}
 				return renderer.CreateTextBlock();
 			}
@@ -574,6 +581,12 @@ namespace ICSharpCode.ILSpy.TextView
 				}
 			}
 			MainWindow.Instance.JumpToReference(reference);
+		}
+
+		void TextViewMouseDown(object sender, MouseButtonEventArgs e)
+		{
+			if (GetReferenceSegmentAtMousePosition() == null)
+				ClearLocalReferenceMarks();
 		}
 
 		void ClearLocalReferenceMarks()

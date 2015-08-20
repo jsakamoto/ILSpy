@@ -124,6 +124,8 @@ namespace ICSharpCode.NRefactory.CSharp.Completion
 		
 		bool IsInsideType (IUnresolvedEntity currentType, TextLocation location)
 		{
+			if (currentType.Region.IsEmpty)
+				return false;
 			int startOffset = document.GetOffset (currentType.Region.Begin);
 			int endOffset = document.GetOffset (location);
 			//bool foundEndBracket = false;
@@ -149,10 +151,6 @@ namespace ICSharpCode.NRefactory.CSharp.Completion
 						if (bracketStack.Count > 0)
 							bracketStack.Pop ();
 						break;
-					case '\r':
-					case '\n':
-						isInLineComment = false;
-						break;
 					case '/':
 						if (isInBlockComment) {
 							if (i > 0 && document.GetCharAt (i - 1) == '*') 
@@ -173,7 +171,10 @@ namespace ICSharpCode.NRefactory.CSharp.Completion
 						if (!(isInString || isInLineComment || isInBlockComment)) 
 							isInChar = !isInChar;
 						break;
-					default :
+					default :			
+						if (NewLine.IsNewLine(ch)) {
+							isInLineComment = false;
+						}
 						break;
 					}
 				}

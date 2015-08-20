@@ -13,11 +13,11 @@
 //
 
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Permissions;
-using System.Linq;
 using System.Text;
 using System.Diagnostics;
 using Mono.CompilerServices.SymbolWriter;
@@ -54,7 +54,11 @@ namespace Mono.CSharp
 
 		protected bool is_defined;
 
-		public TypeContainer (TypeContainer parent, MemberName name, Attributes attrs, MemberKind kind)
+		public int CounterAnonymousMethods { get; set; }
+		public int CounterAnonymousContainers { get; set; }
+		public int CounterSwitchTypes { get; set; }
+
+		protected TypeContainer (TypeContainer parent, MemberName name, Attributes attrs, MemberKind kind)
 			: base (parent, name, attrs)
 		{
 			this.Kind = kind;
@@ -99,9 +103,9 @@ namespace Mono.CSharp
 			get; set;
 		}
 
-		public virtual void AddCompilerGeneratedClass (CompilerGeneratedContainer c)
+		public void AddCompilerGeneratedClass (CompilerGeneratedContainer c)
 		{
-			containers.Add (c);
+			AddTypeContainerMember (c);
 		}
 
 		public virtual void AddPartial (TypeDefinition next_part)
@@ -140,8 +144,8 @@ namespace Mono.CSharp
 			}
 
 			if ((existing.ModFlags & Modifiers.AccessibilityMask) != (next_part.ModFlags & Modifiers.AccessibilityMask) &&
-				((existing.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFER) == 0 &&
-				 (next_part.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFER) == 0)) {
+				((existing.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFIER) == 0 &&
+				 (next_part.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFIER) == 0)) {
 					 Report.SymbolRelatedToPreviousError (existing);
 				Report.Error (262, next_part.Location,
 					"Partial declarations of `{0}' have conflicting accessibility modifiers",
@@ -168,10 +172,10 @@ namespace Mono.CSharp
 				}
 			}
 
-			if ((next_part.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFER) != 0) {
-				existing.ModFlags |= next_part.ModFlags & ~(Modifiers.DEFAULT_ACCESS_MODIFER | Modifiers.AccessibilityMask);
-			} else if ((existing.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFER) != 0) {
-				existing.ModFlags &= ~(Modifiers.DEFAULT_ACCESS_MODIFER | Modifiers.AccessibilityMask);
+			if ((next_part.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFIER) != 0) {
+				existing.ModFlags |= next_part.ModFlags & ~(Modifiers.DEFAULT_ACCESS_MODIFIER | Modifiers.AccessibilityMask);
+			} else if ((existing.ModFlags & Modifiers.DEFAULT_ACCESS_MODIFIER) != 0) {
+				existing.ModFlags &= ~(Modifiers.DEFAULT_ACCESS_MODIFIER | Modifiers.AccessibilityMask);
 				existing.ModFlags |= next_part.ModFlags;
 			} else {
 				existing.ModFlags |= next_part.ModFlags;
@@ -188,15 +192,14 @@ namespace Mono.CSharp
 
 			next_part.PartialContainer = existing;
 
-			if (containers == null)
-				containers = new List<TypeContainer> ();
+			existing.AddPartialPart (next_part);
 
-			containers.Add (next_part);
+			AddTypeContainerMember (next_part);
 		}
 
 		public virtual void AddTypeContainer (TypeContainer tc)
 		{
-			containers.Add (tc);
+			AddTypeContainerMember (tc);
 
 			var tparams = tc.MemberName.TypeParameters;
 			if (tparams != null && tc.PartialContainer != null) {
@@ -209,6 +212,11 @@ namespace Mono.CSharp
 					td.AddNameToContainer (tp, tp.Name);
 				}
 			}
+		}
+
+		protected virtual void AddTypeContainerMember (TypeContainer tc)
+		{
+			containers.Add (tc);
 		}
 
 		public virtual void CloseContainer ()
@@ -298,6 +306,15 @@ namespace Mono.CSharp
 			return true;
 		}
 
+		public virtual void ExpandBaseInterfaces ()
+		{
+			if (containers != null) {
+				foreach (TypeContainer tc in containers) {
+					tc.ExpandBaseInterfaces ();
+				}
+			}
+		}
+
 		protected virtual void DefineNamespace ()
 		{
 			if (containers != null) {
@@ -348,20 +365,13 @@ namespace Mono.CSharp
 
 		public string GetSignatureForMetadata ()
 		{
-#if STATIC
-			var name = TypeNameParser.Escape (MemberName.Basename);
-
 			if (Parent is TypeDefinition) {
-				return Parent.GetSignatureForMetadata () + "+" + name;
+				return Parent.GetSignatureForMetadata () + "+" + TypeNameParser.Escape (MemberName.Basename);
 			}
 
-			if (Parent != null && Parent.MemberName != null)
-				return Parent.GetSignatureForMetadata () + "." + name;
-
-			return name;
-#else
-			throw new NotImplementedException ();
-#endif
+			var sb = new StringBuilder ();
+			CreateMetadataName (sb);
+			return sb.ToString ();
 		}
 
 		public virtual void RemoveContainer (TypeContainer cont)
@@ -414,7 +424,7 @@ namespace Mono.CSharp
 			}
 
 			public TypeSpec CurrentType {
-				get { return tc.Parent.CurrentType; }
+				get { return tc.PartialContainer.CurrentType; }
 			}
 
 			public TypeParameters CurrentTypeParameters {
@@ -511,6 +521,9 @@ namespace Mono.CSharp
 
 		protected List<FullNamedExpression> type_bases;
 
+		// Partial parts for classes only
+		List<TypeDefinition> class_partial_parts;
+
 		TypeDefinition InTransit;
 
 		public TypeBuilder TypeBuilder;
@@ -538,8 +551,10 @@ namespace Mono.CSharp
 
 		public int DynamicSitesCounter;
 		public int AnonymousMethodsCounter;
+		public int MethodGroupsCounter;
 
-		static readonly string[] attribute_targets = new string[] { "type" };
+		static readonly string[] attribute_targets = new [] { "type" };
+		static readonly string[] attribute_targets_primary = new [] { "type", "method" };
 
 		/// <remarks>
 		///  The pending methods that need to be implemented
@@ -547,7 +562,7 @@ namespace Mono.CSharp
 		/// </remarks>
 		PendingImplementation pending;
 
-		public TypeDefinition (TypeContainer parent, MemberName name, Attributes attrs, MemberKind kind)
+		protected TypeDefinition (TypeContainer parent, MemberName name, Attributes attrs, MemberKind kind)
 			: base (parent, name, attrs, kind)
 		{
 			PartialContainer = this;
@@ -679,6 +694,18 @@ namespace Mono.CSharp
 			}
 		}
 
+		bool ITypeDefinition.IsTypeForwarder {
+			get {
+				return false;
+			}
+		}
+
+		bool ITypeDefinition.IsCyclicTypeForwarder {
+			get {
+				return false;
+			}
+		}
+
 		//
 		// Returns true for secondary partial containers
 		//
@@ -710,6 +737,12 @@ namespace Mono.CSharp
 			}
 		}
 
+		public ParametersCompiled PrimaryConstructorParameters { get; set; }
+
+		public Arguments PrimaryConstructorBaseArguments { get; set; }
+
+		public Location PrimaryConstructorBaseArgumentsStart { get; set; }
+
 		public TypeParameters TypeParametersAll {
 			get {
 				return all_type_parameters;
@@ -718,7 +751,7 @@ namespace Mono.CSharp
 
 		public override string[] ValidAttributeTargets {
 			get {
-				return attribute_targets;
+				return PrimaryConstructorParameters != null ? attribute_targets_primary : attribute_targets;
 			}
 		}
 
@@ -756,7 +789,7 @@ namespace Mono.CSharp
 				}
 			}
 
-			AddNameToContainer (symbol, symbol.MemberName.Basename);
+			AddNameToContainer (symbol, symbol.MemberName.Name);
 			members.Add (symbol);
 		}
 
@@ -764,21 +797,17 @@ namespace Mono.CSharp
 		{
 			AddNameToContainer (tc, tc.Basename);
 
-			if (containers == null)
-				containers = new List<TypeContainer> ();
-
-			members.Add (tc);
 			base.AddTypeContainer (tc);
 		}
 
-		public override void AddCompilerGeneratedClass (CompilerGeneratedContainer c)
+		protected override void AddTypeContainerMember (TypeContainer tc)
 		{
-			members.Add (c);
+			members.Add (tc);
 
 			if (containers == null)
 				containers = new List<TypeContainer> ();
 
-			base.AddCompilerGeneratedClass (c);
+			base.AddTypeContainerMember (tc);
 		}
 
 		//
@@ -876,8 +905,34 @@ namespace Mono.CSharp
 			AddMember (op);
 		}
 
+		public void AddPartialPart (TypeDefinition part)
+		{
+			if (Kind != MemberKind.Class)
+				return;
+
+			if (class_partial_parts == null)
+				class_partial_parts = new List<TypeDefinition> ();
+
+			class_partial_parts.Add (part);
+		}
+
 		public override void ApplyAttributeBuilder (Attribute a, MethodSpec ctor, byte[] cdata, PredefinedAttributes pa)
 		{
+			if (a.Target == AttributeTargets.Method) {
+				foreach (var m in members) {
+					var c = m as Constructor;
+					if (c == null)
+						continue;
+
+					if (c.IsPrimaryConstructor) {
+						c.ApplyAttributeBuilder (a, ctor, cdata, pa);
+						return;
+					}
+				}
+
+				throw new InternalErrorException ();
+			}
+
 			if (has_normal_indexers && a.Type == pa.DefaultMember) {
 				Report.Error (646, a.Location, "Cannot specify the `DefaultMember' attribute on type containing an indexer");
 				return;
@@ -972,7 +1027,7 @@ namespace Mono.CSharp
 					if (s == null) {
 						s = EmptyExpressionStatement.Instance;
 					} else if (!fi.IsSideEffectFree) {
-						has_complex_initializer |= true;
+						has_complex_initializer = true;
 					}
 
 					init [i] = s;
@@ -988,6 +1043,7 @@ namespace Mono.CSharp
 					if (!has_complex_initializer && fi.IsDefaultInitializer)
 						continue;
 
+					ec.AssignmentInfoOffset += fi.AssignmentOffset;
 					ec.CurrentBlock.AddScopeStatement (new StatementExpression (init [i]));
 				}
 
@@ -999,9 +1055,20 @@ namespace Mono.CSharp
 
 			for (int i = 0; i < initialized_fields.Count; ++i) {
 				FieldInitializer fi = initialized_fields [i];
+
+				//
+				// Clone before resolving otherwise when field initializer is needed
+				// in more than 1 constructor any resolve after the initial one would
+				// only took the resolved expression which is problem for expressions
+				// that generate extra expressions or code during Resolve phase
+				//
+				var cloned = fi.Clone (new CloneContext ());
+
 				ExpressionStatement s = fi.ResolveStatement (ec);
-				if (s == null)
+				if (s == null) {
+					initialized_fields [i] = new FieldInitializer (fi.Field, ErrorExpression.Instance, Location.Null);
 					continue;
+				}
 
 				//
 				// Field is re-initialized to its default value => removed
@@ -1009,7 +1076,9 @@ namespace Mono.CSharp
 				if (fi.IsDefaultInitializer && ec.Module.Compiler.Settings.Optimize)
 					continue;
 
+				ec.AssignmentInfoOffset += fi.AssignmentOffset;
 				ec.CurrentBlock.AddScopeStatement (new StatementExpression (s));
+				initialized_fields [i] = (FieldInitializer) cloned;
 			}
 		}
 
@@ -1031,6 +1100,9 @@ namespace Mono.CSharp
 
 		internal override void GenerateDocComment (DocumentationBuilder builder)
 		{
+			if (IsPartialPart)
+				return;
+
 			base.GenerateDocComment (builder);
 
 			foreach (var member in members)
@@ -1074,9 +1146,9 @@ namespace Mono.CSharp
 			}
 		}
 
-		public virtual void AddBasesForPart (List<FullNamedExpression> bases)
+		public virtual void SetBaseTypes (List<FullNamedExpression> baseTypes)
 		{
-			type_bases = bases;
+			type_bases = baseTypes;
 		}
 
 		/// <summary>
@@ -1186,7 +1258,7 @@ namespace Mono.CSharp
 				}
 
 				bool pair_found = false;
-				for (int ii = i + 1; ii < members.Count; ++ii) {
+				for (int ii = 0; ii < members.Count; ++ii) {
 					var o_b = members[ii] as Operator;
 					if (o_b == null || o_b.OperatorType != matching_type)
 						continue;
@@ -1238,7 +1310,7 @@ namespace Mono.CSharp
 			//
 			// Sets .size to 1 for structs with no instance fields
 			//
-			int type_size = Kind == MemberKind.Struct && first_nonstatic_field == null ? 1 : 0;
+			int type_size = Kind == MemberKind.Struct && first_nonstatic_field == null && !(this is StateMachine) ? 1 : 0;
 
 			var parent_def = Parent as TypeDefinition;
 			if (parent_def == null) {
@@ -1267,8 +1339,10 @@ namespace Mono.CSharp
 
 				all_tp_builders = TypeBuilder.DefineGenericParameters (tparam_names);
 
-				if (CurrentTypeParameters != null)
-					CurrentTypeParameters.Define (all_tp_builders, spec, CurrentTypeParametersStartIndex, this);
+				if (CurrentTypeParameters != null) {
+					CurrentTypeParameters.Create (spec, CurrentTypeParametersStartIndex, this);
+					CurrentTypeParameters.Define (all_tp_builders);
+				}
 			}
 
 			return true;
@@ -1322,7 +1396,7 @@ namespace Mono.CSharp
 
 		public SourceMethodBuilder CreateMethodSymbolEntry ()
 		{
-			if (Module.DeclaringAssembly.SymbolWriter == null)
+			if (Module.DeclaringAssembly.SymbolWriter == null || (ModFlags & Modifiers.DEBUGGER_HIDDEN) != 0)
 				return null;
 
 			var source_file = GetCompilationSourceFile ();
@@ -1351,22 +1425,12 @@ namespace Mono.CSharp
 
 			if (proxy_method == null) {
 				string name = CompilerGeneratedContainer.MakeName (method.Name, null, "BaseCallProxy", hoisted_base_call_proxies.Count);
-				var base_parameters = new Parameter[method.Parameters.Count];
-				for (int i = 0; i < base_parameters.Length; ++i) {
-					var base_param = method.Parameters.FixedParameters[i];
-					base_parameters[i] = new Parameter (new TypeExpression (method.Parameters.Types[i], Location),
-						base_param.Name, base_param.ModFlags, null, Location);
-					base_parameters[i].Resolve (this, i);
-				}
-
-				var cloned_params = ParametersCompiled.CreateFullyResolved (base_parameters, method.Parameters.Types);
-				if (method.Parameters.HasArglist) {
-					cloned_params.FixedParameters[0] = new Parameter (null, "__arglist", Parameter.Modifier.NONE, null, Location);
-					cloned_params.Types[0] = Module.PredefinedTypes.RuntimeArgumentHandle.Resolve ();
-				}
 
 				MemberName member_name;
 				TypeArguments targs = null;
+				TypeSpec return_type = method.ReturnType;
+				var local_param_types = method.Parameters.Types;
+
 				if (method.IsGeneric) {
 					//
 					// Copy all base generic method type parameters info
@@ -1378,19 +1442,42 @@ namespace Mono.CSharp
 					targs.Arguments = new TypeSpec[hoisted_tparams.Length];
 					for (int i = 0; i < hoisted_tparams.Length; ++i) {
 						var tp = hoisted_tparams[i];
-						tparams.Add (new TypeParameter (tp, null, new MemberName (tp.Name, Location), null));
+						var local_tp = new TypeParameter (tp, null, new MemberName (tp.Name, Location), null);
+						tparams.Add (local_tp);
 
 						targs.Add (new SimpleName (tp.Name, Location));
-						targs.Arguments[i] = tp;
+						targs.Arguments[i] = local_tp.Type;
 					}
 
 					member_name = new MemberName (name, tparams, Location);
+
+					//
+					// Mutate any method type parameters from original
+					// to newly created hoisted version
+					//
+					var mutator = new TypeParameterMutator (hoisted_tparams, tparams);
+					return_type = mutator.Mutate (return_type);
+					local_param_types = mutator.Mutate (local_param_types);
 				} else {
 					member_name = new MemberName (name);
 				}
 
+				var base_parameters = new Parameter[method.Parameters.Count];
+				for (int i = 0; i < base_parameters.Length; ++i) {
+					var base_param = method.Parameters.FixedParameters[i];
+					base_parameters[i] = new Parameter (new TypeExpression (local_param_types [i], Location),
+						base_param.Name, base_param.ModFlags, null, Location);
+					base_parameters[i].Resolve (this, i);
+				}
+
+				var cloned_params = ParametersCompiled.CreateFullyResolved (base_parameters, method.Parameters.Types);
+				if (method.Parameters.HasArglist) {
+					cloned_params.FixedParameters[0] = new Parameter (null, "__arglist", Parameter.Modifier.NONE, null, Location);
+					cloned_params.Types[0] = Module.PredefinedTypes.RuntimeArgumentHandle.Resolve ();
+				}
+
 				// Compiler generated proxy
-				proxy_method = new Method (this, new TypeExpression (method.ReturnType, Location),
+				proxy_method = new Method (this, new TypeExpression (return_type, Location),
 					Modifiers.PRIVATE | Modifiers.COMPILER_GENERATED | Modifiers.DEBUGGER_HIDDEN,
 					member_name, cloned_params, null);
 
@@ -1416,6 +1503,7 @@ namespace Mono.CSharp
 
 				members.Add (proxy_method);
 				proxy_method.Define ();
+				proxy_method.PrepareEmit ();
 
 				hoisted_base_call_proxies.Add (method, proxy_method);
 			}
@@ -1424,6 +1512,14 @@ namespace Mono.CSharp
 		}
 
 		protected bool DefineBaseTypes ()
+		{
+			if (IsPartialPart && Kind == MemberKind.Class)
+				return true;
+
+			return DoDefineBaseType ();
+		}
+
+		bool DoDefineBaseType ()
 		{
 			iface_exprs = ResolveBaseTypes (out base_type_expr);
 			bool set_base_type;
@@ -1468,6 +1564,14 @@ namespace Mono.CSharp
 					PartialContainer.containers.AddRange (containers);
 				}
 
+				if (PrimaryConstructorParameters != null) {
+					if (PartialContainer.PrimaryConstructorParameters != null) {
+						Report.Error (8036, Location, "Only one part of a partial type can declare primary constructor parameters");
+					} else {
+						PartialContainer.PrimaryConstructorParameters = PrimaryConstructorParameters;
+					}
+				}
+
 				members_defined = members_defined_ok = true;
 				caching_flags |= Flags.CloseTypeCreated;
 			} else {
@@ -1483,16 +1587,22 @@ namespace Mono.CSharp
 					    GetSignatureForError (), cycle.GetSignatureForError ());
 
 					iface_exprs = null;
+					PartialContainer.iface_exprs = null;
 				} else {
 					Report.Error (146, Location,
 						"Circular base class dependency involving `{0}' and `{1}'",
 						GetSignatureForError (), cycle.GetSignatureForError ());
 
 					base_type = null;
+					PartialContainer.base_type = null;
 				}
 			}
 
 			if (iface_exprs != null) {
+				if (!PrimaryConstructorBaseArgumentsStart.IsNull) {
+					Report.Error (8049, PrimaryConstructorBaseArgumentsStart, "Implemented interfaces cannot have arguments");
+				}
+
 				foreach (var iface_type in iface_exprs) {
 					// Prevents a crash, the interface might not have been resolved: 442144
 					if (iface_type == null)
@@ -1502,26 +1612,6 @@ namespace Mono.CSharp
 						continue;
 
 					TypeBuilder.AddInterfaceImplementation (iface_type.GetMetaInfo ());
-
-					// Ensure the base is always setup
-					var compiled_iface = iface_type.MemberDefinition as Interface;
-					if (compiled_iface != null) {
-						// TODO: Need DefineBaseType only
-						compiled_iface.DefineContainer ();
-					}
-
-					if (iface_type.Interfaces != null) {
-						var base_ifaces = new List<TypeSpec> (iface_type.Interfaces);
-						for (int i = 0; i < base_ifaces.Count; ++i) {
-							var ii_iface_type = base_ifaces[i];
-							if (spec.AddInterfaceDefined (ii_iface_type)) {
-								TypeBuilder.AddInterfaceImplementation (ii_iface_type.GetMetaInfo ());
-
-								if (ii_iface_type.Interfaces != null)
-									base_ifaces.AddRange (ii_iface_type.Interfaces);
-							}
-						}
-					}
 				}
 			}
 
@@ -1531,17 +1621,109 @@ namespace Mono.CSharp
 			}
 
 			if (set_base_type) {
-				if (base_type != null) {
-					spec.BaseType = base_type;
+				SetBaseType ();
+			}
 
-					// Set base type after type creation
-					TypeBuilder.SetParent (base_type.GetMetaInfo ());
-				} else {
-					TypeBuilder.SetParent (null);
+			//
+			// Base type of partial container has to be resolved before we
+			// resolve any nested types of the container. We need to know
+			// partial parts because the base type can be specified in file
+			// defined after current container
+			//
+			if (class_partial_parts != null) {
+				foreach (var pp in class_partial_parts) {
+					if (pp.PrimaryConstructorBaseArguments != null)
+						PrimaryConstructorBaseArguments = pp.PrimaryConstructorBaseArguments;
+
+					pp.DoDefineBaseType ();
 				}
+
 			}
 
 			return true;
+		}
+
+		void SetBaseType ()
+		{
+			if (base_type == null) {
+				TypeBuilder.SetParent (null);
+				return;
+			}
+
+			if (spec.BaseType == base_type)
+				return;
+
+			spec.BaseType = base_type;
+
+			if (IsPartialPart)
+				spec.UpdateInflatedInstancesBaseType ();
+
+			// Set base type after type creation
+			TypeBuilder.SetParent (base_type.GetMetaInfo ());
+		}
+
+		public override void ExpandBaseInterfaces ()
+		{
+			if (!IsPartialPart)
+				DoExpandBaseInterfaces ();
+
+			base.ExpandBaseInterfaces ();
+		}
+
+		public void DoExpandBaseInterfaces ()
+		{
+			if ((caching_flags & Flags.InterfacesExpanded) != 0)
+				return;
+
+			caching_flags |= Flags.InterfacesExpanded;
+
+			//
+			// Expand base interfaces. It cannot be done earlier because all partial
+			// interface parts need to be defined before the type they are used from
+			//
+			if (iface_exprs != null) {
+				foreach (var iface in iface_exprs) {
+					if (iface == null)
+						continue;
+
+					var td = iface.MemberDefinition as TypeDefinition;
+					if (td != null)
+						td.DoExpandBaseInterfaces ();
+
+					if (iface.Interfaces == null)
+						continue;
+
+					foreach (var biface in iface.Interfaces) {
+						if (spec.AddInterfaceDefined (biface)) {
+							TypeBuilder.AddInterfaceImplementation (biface.GetMetaInfo ());
+						}
+					}
+				}
+			}
+
+			//
+			// Include all base type interfaces too, see ImportTypeBase for details
+			//
+			if (base_type != null) {
+				var td = base_type.MemberDefinition as TypeDefinition;
+				if (td != null)
+					td.DoExpandBaseInterfaces ();
+
+				//
+				// Simply use base interfaces only, they are all expanded which makes
+				// it easy to handle generic type argument propagation with single
+				// inflator only.
+				//
+				// interface IA<T> : IB<T>
+				// interface IB<U> : IC<U>
+				// interface IC<V>
+				//
+				if (base_type.Interfaces != null) {
+					foreach (var iface in base_type.Interfaces) {
+						spec.AddInterfaceDefined (iface);
+					}
+				}
+			}
 		}
 
 		public override void PrepareEmit ()
@@ -1550,14 +1732,23 @@ namespace Mono.CSharp
 				return;
 
 			foreach (var member in members) {
+				var pbm = member as PropertyBasedMember;
+				if (pbm != null)
+					pbm.PrepareEmit ();
+
 				var pm = member as IParametersMember;
 				if (pm != null) {
+					var mc = member as MethodOrOperator;
+					if (mc != null) {
+						mc.PrepareEmit ();
+					}
 
 					var p = pm.Parameters;
 					if (p.IsEmpty)
 						continue;
 
 					((ParametersCompiled) p).ResolveDefaultValues (member);
+					continue;
 				}
 
 				var c = member as Const;
@@ -1623,19 +1814,6 @@ namespace Mono.CSharp
 			current_type = null;
 		}
 
-		void UpdateTypeParameterConstraints (TypeDefinition part)
-		{
-			for (int i = 0; i < CurrentTypeParameters.Count; i++) {
-				if (CurrentTypeParameters[i].AddPartialConstraints (part, part.MemberName.TypeParameters[i]))
-					continue;
-
-				Report.SymbolRelatedToPreviousError (Location, "");
-				Report.Error (265, part.Location,
-					"Partial declarations of `{0}' have inconsistent constraints for type parameter `{1}'",
-					GetSignatureForError (), CurrentTypeParameters[i].GetSignatureForError ());
-			}
-		}
-
 		public override void RemoveContainer (TypeContainer cont)
 		{
 			base.RemoveContainer (cont);
@@ -1645,7 +1823,7 @@ namespace Mono.CSharp
 
 		protected virtual bool DoResolveTypeParameters ()
 		{
-			var tparams = CurrentTypeParameters;
+			var tparams = MemberName.TypeParameters;
 			if (tparams == null)
 				return true;
 
@@ -1657,10 +1835,24 @@ namespace Mono.CSharp
 					error = true;
 					return false;
 				}
+
+				if (IsPartialPart) {
+					var pc_tp = PartialContainer.CurrentTypeParameters [i];
+
+					tp.Create (spec, this);
+					tp.Define (pc_tp);
+
+					if (tp.OptAttributes != null) {
+						if (pc_tp.OptAttributes == null)
+							pc_tp.OptAttributes = tp.OptAttributes;
+						else
+							pc_tp.OptAttributes.Attrs.AddRange (tp.OptAttributes.Attrs);
+					}
+				}
 			}
 
 			if (IsPartialPart) {
-				PartialContainer.UpdateTypeParameterConstraints (this);
+				PartialContainer.CurrentTypeParameters.UpdateConstraints (this);
 			}
 
 			return true;
@@ -1727,16 +1919,13 @@ namespace Mono.CSharp
 					if (compiled_iface != null)
 						compiled_iface.Define ();
 
-					if (Kind == MemberKind.Interface)
-						MemberCache.AddInterface (iface_type);
-
 					ObsoleteAttribute oa = iface_type.GetAttributeObsolete ();
 					if (oa != null && !IsObsolete)
 						AttributeTester.Report_ObsoleteMessage (oa, iface_type.GetSignatureForError (), Location, Report);
 
 					if (iface_type.Arity > 0) {
 						// TODO: passing `this' is wrong, should be base type iface instead
-						TypeManager.CheckTypeVariance (iface_type, Variance.Covariant, this);
+						VarianceDecl.CheckTypeVariance (iface_type, Variance.Covariant, this);
 
 						if (((InflatedTypeSpec) iface_type).HasDynamicArgument () && !IsCompilerGenerated) {
 							Report.Error (1966, Location,
@@ -1747,19 +1936,23 @@ namespace Mono.CSharp
 					}
 
 					if (iface_type.IsGenericOrParentIsGeneric) {
-						if (spec.Interfaces != null) {
-							foreach (var prev_iface in iface_exprs) {
-								if (prev_iface == iface_type)
-									break;
+						foreach (var prev_iface in iface_exprs) {
+							if (prev_iface == iface_type || prev_iface == null)
+								break;
 
-								if (!TypeSpecComparer.Unify.IsEqual (iface_type, prev_iface))
-									continue;
+							if (!TypeSpecComparer.Unify.IsEqual (iface_type, prev_iface))
+								continue;
 
-								Report.Error (695, Location,
-									"`{0}' cannot implement both `{1}' and `{2}' because they may unify for some type parameter substitutions",
-									GetSignatureForError (), prev_iface.GetSignatureForError (), iface_type.GetSignatureForError ());
-							}
+							Report.Error (695, Location,
+								"`{0}' cannot implement both `{1}' and `{2}' because they may unify for some type parameter substitutions",
+								GetSignatureForError (), prev_iface.GetSignatureForError (), iface_type.GetSignatureForError ());
 						}
+					}
+				}
+
+				if (Kind == MemberKind.Interface) {
+					foreach (var iface in spec.Interfaces) {
+						MemberCache.AddInterface (iface);
 					}
 				}
 			}
@@ -1778,11 +1971,6 @@ namespace Mono.CSharp
 							"A generic type cannot derive from `{0}' because it is an attribute class",
 							base_type.GetSignatureForError ());
 					}
-				}
-
-				if (base_type.Interfaces != null) {
-					foreach (var iface in base_type.Interfaces)
-						spec.AddInterface (iface);
 				}
 
 				var baseContainer = base_type.MemberDefinition as ClassOrStruct;
@@ -1914,10 +2102,10 @@ namespace Mono.CSharp
 				foreach (var member in members) {
 					if (member is Event) {
 						//
-						// An event can be assigned from same class only, so we can report
+						// An event can be assigned from same class only, report
 						// this warning for all accessibility modes
 						//
-						if (!member.IsUsed)
+						if (!member.IsUsed && !PartialContainer.HasStructLayout)
 							Report.Warning (67, 3, member.Location, "The event `{0}' is never used", member.GetSignatureForError ());
 
 						continue;
@@ -1935,12 +2123,15 @@ namespace Mono.CSharp
 						continue;
 
 					if (!member.IsUsed) {
-						if ((member.caching_flags & Flags.IsAssigned) == 0) {
-							Report.Warning (169, 3, member.Location, "The private field `{0}' is never used", member.GetSignatureForError ());
-						} else {
-							Report.Warning (414, 3, member.Location, "The private field `{0}' is assigned but its value is never used",
-								member.GetSignatureForError ());
+						if (!PartialContainer.HasStructLayout) {
+							if ((member.caching_flags & Flags.IsAssigned) == 0) {
+								Report.Warning (169, 3, member.Location, "The private field `{0}' is never used", member.GetSignatureForError ());
+							} else {
+								Report.Warning (414, 3, member.Location, "The private field `{0}' is assigned but its value is never used",
+									member.GetSignatureForError ());
+							}
 						}
+
 						continue;
 					}
 
@@ -2044,8 +2235,13 @@ namespace Mono.CSharp
 
 			base.Emit ();
 
-			for (int i = 0; i < members.Count; i++)
-				members[i].Emit ();
+			for (int i = 0; i < members.Count; i++) {
+				var m = members[i];
+				if ((m.caching_flags & Flags.CloseTypeCreated) != 0)
+					continue;
+
+				m.Emit ();
+			}
 
 			EmitIndexerName ();
 			CheckAttributeClsCompliance ();
@@ -2215,17 +2411,26 @@ namespace Mono.CSharp
 		/// </summary>
 		public bool VerifyImplements (InterfaceMemberBase mb)
 		{
-			var ifaces = spec.Interfaces;
+			var ifaces = PartialContainer.Interfaces;
 			if (ifaces != null) {
 				foreach (TypeSpec t in ifaces){
 					if (t == mb.InterfaceType)
 						return true;
+
+					var expanded_base = t.Interfaces;
+					if (expanded_base == null)
+						continue;
+
+					foreach (var bt in expanded_base) {
+						if (bt == mb.InterfaceType)
+							return true;
+					}
 				}
 			}
 			
 			Report.SymbolRelatedToPreviousError (mb.InterfaceType);
 			Report.Error (540, mb.Location, "`{0}': containing type does not implement interface `{1}'",
-				mb.GetSignatureForError (), TypeManager.CSharpName (mb.InterfaceType));
+				mb.GetSignatureForError (), mb.InterfaceType.GetSignatureForError ());
 			return false;
 		}
 
@@ -2276,8 +2481,6 @@ namespace Mono.CSharp
 		//
 		// Public function used to locate types.
 		//
-		// Set 'ignore_cs0104' to true if you want to ignore cs0104 errors.
-		//
 		// Returns: Type or null if they type can not be found.
 		//
 		public override FullNamedExpression LookupNamespaceOrType (string name, int arity, LookupMode mode, Location loc)
@@ -2303,7 +2506,13 @@ namespace Mono.CSharp
 				if (t != null && (t.IsAccessible (this) || mode == LookupMode.IgnoreAccessibility))
 					e = new TypeExpression (t, Location.Null);
 				else {
+					var errors = Compiler.Report.Errors;
 					e = Parent.LookupNamespaceOrType (name, arity, mode, loc);
+
+					// TODO: LookupNamespaceOrType does more than just lookup. The result
+					// cannot be cached or the error reporting won't happen
+					if (errors != Compiler.Report.Errors)
+						return e;
 				}
 			}
 
@@ -2385,11 +2594,14 @@ namespace Mono.CSharp
 		public const TypeAttributes StaticClassAttribute = TypeAttributes.Abstract | TypeAttributes.Sealed;
 
 		SecurityType declarative_security;
+		protected Constructor generated_primary_constructor;
 
-		public ClassOrStruct (TypeContainer parent, MemberName name, Attributes attrs, MemberKind kind)
+		protected ClassOrStruct (TypeContainer parent, MemberName name, Attributes attrs, MemberKind kind)
 			: base (parent, name, attrs, kind)
 		{
 		}
+
+		public ToplevelBlock PrimaryConstructorBlock { get; set; }
 
 		protected override TypeAttributes TypeAttr {
 			get {
@@ -2418,7 +2630,7 @@ namespace Mono.CSharp
 						symbol.GetSignatureForError ());
 					return;
 				}
-			
+
 				InterfaceMemberBase imb = symbol as InterfaceMemberBase;
 				if (imb == null || !imb.IsExplicitImpl) {
 					Report.SymbolRelatedToPreviousError (this);
@@ -2455,26 +2667,37 @@ namespace Mono.CSharp
 		/// <summary>
 		/// Defines the default constructors 
 		/// </summary>
-		protected Constructor DefineDefaultConstructor (bool is_static)
+		protected virtual Constructor DefineDefaultConstructor (bool is_static)
 		{
 			// The default instance constructor is public
 			// If the class is abstract, the default constructor is protected
 			// The default static constructor is private
 
 			Modifiers mods;
+			ParametersCompiled parameters = null;
 			if (is_static) {
 				mods = Modifiers.STATIC | Modifiers.PRIVATE;
+				parameters = ParametersCompiled.EmptyReadOnlyParameters;
 			} else {
 				mods = ((ModFlags & Modifiers.ABSTRACT) != 0) ? Modifiers.PROTECTED : Modifiers.PUBLIC;
+				parameters = PrimaryConstructorParameters ?? ParametersCompiled.EmptyReadOnlyParameters;
 			}
 
-			var c = new Constructor (this, MemberName.Name, mods, null, ParametersCompiled.EmptyReadOnlyParameters, Location);
-			c.Initializer = new GeneratedBaseInitializer (Location);
+			var c = new Constructor (this, MemberName.Name, mods, null, parameters, Location);
+			if (Kind == MemberKind.Class)
+				c.Initializer = new GeneratedBaseInitializer (Location, PrimaryConstructorBaseArguments);
+
+			if (PrimaryConstructorParameters != null && !is_static)
+				c.IsPrimaryConstructor = true;
 			
 			AddConstructor (c, true);
-			c.Block = new ToplevelBlock (Compiler, ParametersCompiled.EmptyReadOnlyParameters, Location) {
-				IsCompilerGenerated = true
-			};
+			if (PrimaryConstructorBlock == null) {
+				c.Block = new ToplevelBlock (Compiler, parameters, Location) {
+					IsCompilerGenerated = true
+				};
+			} else {
+				c.Block = PrimaryConstructorBlock;
+			}
 
 			return c;
 		}
@@ -2482,6 +2705,25 @@ namespace Mono.CSharp
 		protected override bool DoDefineMembers ()
 		{
 			CheckProtectedModifier ();
+
+			if (PrimaryConstructorParameters != null) {
+				foreach (Parameter p in PrimaryConstructorParameters.FixedParameters) {
+					if (p.Name == MemberName.Name) {
+						Report.Error (8039, p.Location, "Primary constructor of type `{0}' has parameter of same name as containing type",
+							GetSignatureForError ());
+					}
+
+					if (CurrentTypeParameters != null) {
+						for (int i = 0; i < CurrentTypeParameters.Count; ++i) {
+							var tp = CurrentTypeParameters [i];
+							if (p.Name == tp.Name) {
+								Report.Error (8038, p.Location, "Primary constructor of type `{0}' has parameter of same name as type parameter `{1}'",
+									GetSignatureForError (), p.GetSignatureForError ());
+							}
+						}
+					}
+				}
+			}
 
 			base.DoDefineMembers ();
 
@@ -2522,7 +2764,7 @@ namespace Mono.CSharp
 			Modifiers.SEALED |
 			Modifiers.STATIC |
 			Modifiers.UNSAFE;
-
+			
 		public Class (TypeContainer parent, MemberName name, Modifiers mod, Attributes attrs)
 			: base (parent, name, attrs, MemberKind.Class)
 		{
@@ -2536,14 +2778,14 @@ namespace Mono.CSharp
 			visitor.Visit (this);
 		}
 
-		public override void AddBasesForPart (List<FullNamedExpression> bases)
+		public override void SetBaseTypes (List<FullNamedExpression> baseTypes)
 		{
 			var pmn = MemberName;
 			if (pmn.Name == "Object" && !pmn.IsGeneric && Parent.MemberName.Name == "System" && Parent.MemberName.Left == null)
 				Report.Error (537, Location,
 					"The class System.Object cannot have a base class or implement an interface.");
 
-			base.AddBasesForPart (bases);
+			base.SetBaseTypes (baseTypes);
 		}
 
 		public override void ApplyAttributeBuilder (Attribute a, MethodSpec ctor, byte[] cdata, PredefinedAttributes pa)
@@ -2569,7 +2811,7 @@ namespace Mono.CSharp
 				return;
 			}
 
-			if (a.Type.IsConditionallyExcluded (this, Location))
+			if (a.Type.IsConditionallyExcluded (this))
 				return;
 
 			base.ApplyAttributeBuilder (a, ctor, cdata, pa);
@@ -2592,6 +2834,11 @@ namespace Mono.CSharp
 			}
 
 			if (IsStatic) {
+				if (PrimaryConstructorParameters != null) {
+					Report.Error (-800, Location, "`{0}': Static classes cannot have primary constructor", GetSignatureForError ());
+					PrimaryConstructorParameters = null;
+				}
+
 				foreach (var m in Members) {
 					if (m is Operator) {
 						Report.Error (715, m.Location, "`{0}': Static classes cannot contain user-defined operators", m.GetSignatureForError ());
@@ -2619,8 +2866,8 @@ namespace Mono.CSharp
 					Report.Error (708, m.Location, "`{0}': cannot declare instance members in a static class", m.GetSignatureForError ());
 				}
 			} else {
-				if (!PartialContainer.HasInstanceConstructor)
-					DefineDefaultConstructor (false);
+				if (!PartialContainer.HasInstanceConstructor || PrimaryConstructorParameters != null)
+					generated_primary_constructor = DefineDefaultConstructor (false);
 			}
 
 			return base.DoDefineMembers ();
@@ -2635,6 +2882,17 @@ namespace Mono.CSharp
 
 			if (base_type != null && base_type.HasDynamicElement) {
 				Module.PredefinedAttributes.Dynamic.EmitAttribute (TypeBuilder, base_type, Location);
+			}
+		}
+
+		public override void GetCompletionStartingWith (string prefix, List<string> results)
+		{
+			base.GetCompletionStartingWith (prefix, results);
+
+			var bt = base_type;
+			while (bt != null) {
+				results.AddRange (MemberCache.GetCompletitionMembers (this, bt, prefix).Where (l => l.IsStatic).Select (l => l.Name));
+				bt = bt.BaseType;
 			}
 		}
 
@@ -2831,11 +3089,33 @@ namespace Mono.CSharp
 			return fts.CheckStructCycles ();
 		}
 
+		protected override bool DoDefineMembers ()
+		{
+			if (PrimaryConstructorParameters != null)
+				generated_primary_constructor = DefineDefaultConstructor (false);
+
+			return base.DoDefineMembers ();
+		}
+
 		public override void Emit ()
 		{
 			CheckStructCycles ();
 
 			base.Emit ();
+		}
+
+		bool HasExplicitConstructor ()
+		{
+			foreach (var m in Members) {
+				var c = m as Constructor;
+				if (c == null)
+					continue;
+
+				if (!c.ParameterInfo.IsEmpty)
+					return true;
+			}
+
+			return false;
 		}
 
 		public override bool IsUnmanagedType ()
@@ -2893,14 +3173,15 @@ namespace Mono.CSharp
 
 		public override void RegisterFieldForInitialization (MemberCore field, FieldInitializer expression)
 		{
-			if ((field.ModFlags & Modifiers.STATIC) == 0) {
-				Report.Error (573, field.Location, "`{0}': Structs cannot have instance field initializers",
+			if ((field.ModFlags & Modifiers.STATIC) == 0 && !HasExplicitConstructor ()) {
+				Report.Error (8054, field.Location, "`{0}': Structs without explicit constructors cannot contain members with initializers",
 					field.GetSignatureForError ());
+
 				return;
 			}
+
 			base.RegisterFieldForInitialization (field, expression);
 		}
-
 	}
 
 	/// <summary>
@@ -2976,7 +3257,7 @@ namespace Mono.CSharp
 
 					Report.SymbolRelatedToPreviousError (iface);
 					Report.Warning (3027, 1, Location, "`{0}' is not CLS-compliant because base interface `{1}' is not CLS-compliant",
-						GetSignatureForError (), TypeManager.CSharpName (iface));
+						GetSignatureForError (), iface.GetSignatureForError ());
 				}
 			}
 
@@ -3049,7 +3330,7 @@ namespace Mono.CSharp
 		readonly Modifiers explicit_mod_flags;
 		public MethodAttributes flags;
 
-		public InterfaceMemberBase (TypeDefinition parent, FullNamedExpression type, Modifiers mod, Modifiers allowed_mod, MemberName name, Attributes attrs)
+		protected InterfaceMemberBase (TypeDefinition parent, FullNamedExpression type, Modifiers mod, Modifiers allowed_mod, MemberName name, Attributes attrs)
 			: base (parent, type, mod, allowed_mod, Modifiers.PRIVATE, name, attrs)
 		{
 			IsInterface = parent.Kind == MemberKind.Interface;
@@ -3167,7 +3448,7 @@ namespace Mono.CSharp
 					}
 				}
 
-				if (!IsInterface && base_member.IsAbstract && !overrides) {
+				if (!IsInterface && base_member.IsAbstract && !overrides && !IsStatic) {
 					Report.SymbolRelatedToPreviousError (base_member);
 					Report.Error (533, Location, "`{0}' hides inherited abstract member `{1}'",
 						GetSignatureForError (), base_member.GetSignatureForError ());
@@ -3211,10 +3492,10 @@ namespace Mono.CSharp
 				Report.SymbolRelatedToPreviousError (base_member);
 				if (this is PropertyBasedMember) {
 					Report.Error (1715, Location, "`{0}': type must be `{1}' to match overridden member `{2}'",
-						GetSignatureForError (), TypeManager.CSharpName (base_member_type), TypeManager.CSharpSignature (base_member));
+						GetSignatureForError (), base_member_type.GetSignatureForError (), base_member.GetSignatureForError ());
 				} else {
 					Report.Error (508, Location, "`{0}': return type must be `{1}' to match overridden member `{2}'",
-						GetSignatureForError (), TypeManager.CSharpName (base_member_type), TypeManager.CSharpSignature (base_member));
+						GetSignatureForError (), base_member_type.GetSignatureForError (), base_member.GetSignatureForError ());
 				}
 				ok = false;
 			}
@@ -3288,12 +3569,16 @@ namespace Mono.CSharp
 				if (!InterfaceType.IsInterface) {
 					Report.SymbolRelatedToPreviousError (InterfaceType);
 					Report.Error (538, Location, "The type `{0}' in explicit interface declaration is not an interface",
-						TypeManager.CSharpName (InterfaceType));
+						InterfaceType.GetSignatureForError ());
 				} else {
 					Parent.PartialContainer.VerifyImplements (this);
 				}
 
-				ModifiersExtensions.Check (Modifiers.AllowedExplicitImplFlags, explicit_mod_flags, 0, Location, Report);
+				Modifiers allowed_explicit = Modifiers.AllowedExplicitImplFlags;
+				if (this is Method)
+					allowed_explicit |= Modifiers.ASYNC;
+
+				ModifiersExtensions.Check (allowed_explicit, explicit_mod_flags, 0, Location, Report);
 			}
 
 			return base.Define ();
@@ -3319,15 +3604,15 @@ namespace Mono.CSharp
 				if (this is Indexer)
 					Report.Error (55, Location,
 						      "Inconsistent accessibility: parameter type `{0}' is less accessible than indexer `{1}'",
-						      TypeManager.CSharpName (t), GetSignatureForError ());
+						      t.GetSignatureForError (), GetSignatureForError ());
 				else if (this is Operator)
 					Report.Error (57, Location,
 						      "Inconsistent accessibility: parameter type `{0}' is less accessible than operator `{1}'",
-						      TypeManager.CSharpName (t), GetSignatureForError ());
+						      t.GetSignatureForError (), GetSignatureForError ());
 				else
 					Report.Error (51, Location,
 						"Inconsistent accessibility: parameter type `{0}' is less accessible than method `{1}'",
-						TypeManager.CSharpName (t), GetSignatureForError ());
+						t.GetSignatureForError (), GetSignatureForError ());
 				error = true;
 			}
 			return !error;
@@ -3337,14 +3622,14 @@ namespace Mono.CSharp
 		{
 			base.DoMemberTypeDependentChecks ();
 
-			TypeManager.CheckTypeVariance (MemberType, ExpectedMemberTypeVariance, this);
+			VarianceDecl.CheckTypeVariance (MemberType, ExpectedMemberTypeVariance, this);
 		}
 
 		public override void Emit()
 		{
 			// for extern static method must be specified either DllImport attribute or MethodImplAttribute.
 			// We are more strict than csc and report this as an error because SRE does not allow emit that
-			if ((ModFlags & Modifiers.EXTERN) != 0 && !is_external_implementation) {
+			if ((ModFlags & Modifiers.EXTERN) != 0 && !is_external_implementation && (OptAttributes == null || !OptAttributes.HasResolveError ())) {
 				if (this is Constructor) {
 					Report.Warning (824, 1, Location,
 						"Constructor `{0}' is marked `external' but has no external implementation specified", GetSignatureForError ());
@@ -3436,7 +3721,7 @@ namespace Mono.CSharp
 			// replacing predefined names which saves some space and name
 			// is still unique
 			//
-			return TypeManager.CSharpName (InterfaceType) + "." + name;
+			return InterfaceType.GetSignatureForError () + "." + name;
 		}
 
 		public override string GetSignatureForDocumentation ()
@@ -3452,6 +3737,16 @@ namespace Mono.CSharp
 			get { return IsExplicitImpl || base.IsUsed; }
 		}
 
+		public override void SetConstraints (List<Constraints> constraints_list)
+		{
+			if (((ModFlags & Modifiers.OVERRIDE) != 0 || IsExplicitImpl)) {
+				Report.Error (460, Location,
+					"`{0}': Cannot specify constraints for overrides and explicit interface implementation methods",
+					GetSignatureForError ());
+			}
+
+			base.SetConstraints (constraints_list);
+		}
 	}
 
 	public abstract class MemberBase : MemberCore
@@ -3465,7 +3760,9 @@ namespace Mono.CSharp
 		{
 			this.Parent = parent;
 			this.type_expr = type;
-			ModFlags = ModifiersExtensions.Check (allowed_mod, mod, def_mod, Location, Report);
+
+			if (name != MemberName.Null)
+				ModFlags = ModifiersExtensions.Check (allowed_mod, mod, def_mod, Location, Report);
 		}
 
 		#region Properties
@@ -3523,29 +3820,33 @@ namespace Mono.CSharp
 				Report.SymbolRelatedToPreviousError (MemberType);
 				if (this is Property)
 					Report.Error (53, Location,
-						      "Inconsistent accessibility: property type `" +
-						      TypeManager.CSharpName (MemberType) + "' is less " +
-						      "accessible than property `" + GetSignatureForError () + "'");
+						"Inconsistent accessibility: property type `" +
+						MemberType.GetSignatureForError () + "' is less " +
+						"accessible than property `" + GetSignatureForError () + "'");
 				else if (this is Indexer)
 					Report.Error (54, Location,
-						      "Inconsistent accessibility: indexer return type `" +
-						      TypeManager.CSharpName (MemberType) + "' is less " +
-						      "accessible than indexer `" + GetSignatureForError () + "'");
+						"Inconsistent accessibility: indexer return type `" +
+						MemberType.GetSignatureForError () + "' is less " +
+						"accessible than indexer `" + GetSignatureForError () + "'");
 				else if (this is MethodCore) {
 					if (this is Operator)
 						Report.Error (56, Location,
-							      "Inconsistent accessibility: return type `" +
-							      TypeManager.CSharpName (MemberType) + "' is less " +
-							      "accessible than operator `" + GetSignatureForError () + "'");
+							"Inconsistent accessibility: return type `" +
+							MemberType.GetSignatureForError () + "' is less " +
+							"accessible than operator `" + GetSignatureForError () + "'");
 					else
 						Report.Error (50, Location,
-							      "Inconsistent accessibility: return type `" +
-							      TypeManager.CSharpName (MemberType) + "' is less " +
-							      "accessible than method `" + GetSignatureForError () + "'");
+							"Inconsistent accessibility: return type `" +
+							MemberType.GetSignatureForError () + "' is less " +
+							"accessible than method `" + GetSignatureForError () + "'");
+				} else if (this is Event) {
+					Report.Error (7025, Location,
+						"Inconsistent accessibility: event type `{0}' is less accessible than event `{1}'",
+						MemberType.GetSignatureForError (), GetSignatureForError ());
 				} else {
 					Report.Error (52, Location,
 						      "Inconsistent accessibility: field type `" +
-						      TypeManager.CSharpName (MemberType) + "' is less " +
+						      MemberType.GetSignatureForError () + "' is less " +
 						      "accessible than field `" + GetSignatureForError () + "'");
 				}
 			}

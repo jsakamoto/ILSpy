@@ -1,4 +1,4 @@
-﻿// Copyright (c) AlphaSierraPapa for the SharpDevelop Team
+﻿// Copyright (c) 2010-2013 AlphaSierraPapa for the SharpDevelop Team
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this
 // software and associated documentation files (the "Software"), to deal in the Software
@@ -151,12 +151,43 @@ namespace ICSharpCode.NRefactory.TypeSystem
 				(line != BeginLine || column >= BeginColumn) &&
 				(line != EndLine   || column <= EndColumn);
 		}
-		
+
 		public bool IsInside(TextLocation location)
 		{
 			return IsInside(location.Line, location.Column);
 		}
-		
+
+		/// <remarks>
+		/// Returns true, if the given coordinates (line, column) are in the region.
+		/// This method assumes that for an unknown end the end line is == -1
+		/// </remarks>
+		public bool Contains(int line, int column)
+		{
+			if (IsEmpty)
+				return false;
+			return line >= BeginLine &&
+				(line <= EndLine   || EndLine == -1) &&
+				(line != BeginLine || column >= BeginColumn) &&
+				(line != EndLine   || column < EndColumn);
+		}
+
+		public bool Contains(TextLocation location)
+		{
+			return Contains(location.Line, location.Column);
+		}
+
+		public bool IntersectsWith (DomRegion region)
+		{
+			return region.Begin <= End && region.End >= Begin;
+		}
+
+		public bool OverlapsWith (DomRegion region)
+		{
+			var maxBegin = Begin > region.Begin ? Begin : region.Begin;
+			var minEnd = End < region.End ? End : region.End;
+			return maxBegin < minEnd;
+		}
+
 		public override string ToString()
 		{
 			return string.Format(
