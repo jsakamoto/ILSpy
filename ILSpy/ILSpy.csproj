@@ -37,7 +37,7 @@
     <ProductName>ILSpy</ProductName>
     <PublisherName>J.Sakamoto</PublisherName>
     <ApplicationRevision>2</ApplicationRevision>
-    <ApplicationVersion>2.3.1855.%2a</ApplicationVersion>
+    <ApplicationVersion>2.3.1855.2</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
@@ -74,7 +74,7 @@
     <DefineConstants>TRACE</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>7D900BFC1EEF93C8F196A58419FFC85A5D3FD957</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>920BAADB9431B3F08E6CE7D650FDF24BCD52EC5E</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
     <ManifestKeyFile>ILSpy_TemporaryKey.pfx</ManifestKeyFile>
