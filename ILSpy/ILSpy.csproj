@@ -36,8 +36,8 @@
     <InstallUrl>http://clickonceget.azurewebsites.net/app/ILSpy/</InstallUrl>
     <ProductName>ILSpy</ProductName>
     <PublisherName>J.Sakamoto</PublisherName>
-    <ApplicationRevision>2</ApplicationRevision>
-    <ApplicationVersion>2.3.1855.2</ApplicationVersion>
+    <ApplicationRevision>1</ApplicationRevision>
+    <ApplicationVersion>2.3.1892.1</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
