@@ -33,14 +33,14 @@
     <UpdatePeriodically>true</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <InstallUrl>http://clickonceget.azurewebsites.net/app/ILSpy/</InstallUrl>
+    <InstallUrl>https://clickonceget.azurewebsites.net/app/ILSpy/</InstallUrl>
     <ProductName>ILSpy</ProductName>
     <PublisherName>J.Sakamoto</PublisherName>
     <ApplicationRevision>0</ApplicationRevision>
     <ApplicationVersion>2.4.1963.0</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
-    <BootstrapperEnabled>true</BootstrapperEnabled>
+    <BootstrapperEnabled>false</BootstrapperEnabled>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Platform)' == 'x86' ">
     <PlatformTarget>x86</PlatformTarget>
@@ -74,10 +74,11 @@
     <DefineConstants>TRACE</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>920BAADB9431B3F08E6CE7D650FDF24BCD52EC5E</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>3FB747F45A9067905AA719559F47D10254C5C2B8</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestKeyFile>ILSpy_TemporaryKey.pfx</ManifestKeyFile>
+    <ManifestKeyFile>
+    </ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
     <GenerateManifests>true</GenerateManifests>
@@ -90,6 +91,9 @@
   </PropertyGroup>
   <PropertyGroup>
     <SignManifests>true</SignManifests>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ManifestTimestampUrl>http://timestamp.verisign.com/scripts/timstamp.dll</ManifestTimestampUrl>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="PresentationCore">
