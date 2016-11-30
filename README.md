@@ -7,6 +7,8 @@
 Downloads
 -------
 
+"ClickOnce" binaries via [ClickOnce Get](https://clickonceget.azurewebsites.net/app/ILSpy/detail)
+
 Xcopy-deployable binaries via [ilspy.net](http://ilspy.net/)
 
 Visual Studio extension via [VS Gallery](https://visualstudiogallery.msdn.microsoft.com/8ef1d688-f80c-4380-8004-2ec7f814e7de)
