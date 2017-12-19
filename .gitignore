@@ -3,6 +3,7 @@ obj/
 
 /ICSharpCode.Decompiler/Properties/AssemblyInfo.cs
 /ILSpy/Properties/AssemblyInfo.cs
+/ILSpy.ClickOnceBootstrap/Properties/AssemblyInfo.cs
 /ILSpy/app.config
 *.user
 /Resharper-ILSpy-Style.xml
