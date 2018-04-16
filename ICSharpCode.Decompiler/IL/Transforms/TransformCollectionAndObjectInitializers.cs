@@ -33,6 +33,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 
 		void IStatementTransform.Run(Block block, int pos, StatementTransformContext context)
 		{
+			if (!context.Settings.ObjectOrCollectionInitializers) return;
 			this.context = context;
 			try {
 				DoTransform(block, pos);
@@ -49,11 +50,11 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				IType instType;
 				switch (initInst) {
 					case NewObj newObjInst:
-						if (newObjInst.ILStackWasEmpty && v.Kind == VariableKind.Local && !context.Function.Method.IsConstructor) {
+						if (newObjInst.ILStackWasEmpty && v.Kind == VariableKind.Local && !context.Function.Method.IsConstructor && !context.Function.Method.IsCompilerGeneratedOrIsInCompilerGeneratedClass()) {
 							// on statement level (no other expressions on IL stack),
 							// prefer to keep local variables (but not stack slots),
 							// unless we are in a constructor (where inlining object initializers might be critical
-							// for the base ctor call)
+							// for the base ctor call) or a compiler-generated delegate method, which might be used in a query expression.
 							return false;
 						}
 						// Do not try to transform display class usages or delegate construction.
@@ -118,7 +119,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					switch (body.Instructions[i + pos]) {
 						case CallInstruction call:
 							if (!(call is CallVirt || call is Call)) continue;
-							var newCall = (CallInstruction)call.Clone();
+							var newCall = call;
 							var newTarget = newCall.Arguments[0];
 							foreach (var load in newTarget.Descendants.OfType<IInstructionWithVariableOperand>())
 								if ((load is LdLoc || load is LdLoca) && load.Variable == v)
@@ -126,14 +127,14 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 							initializerBlock.Instructions.Add(newCall);
 							break;
 						case StObj stObj:
-							var newStObj = (StObj)stObj.Clone();
+							var newStObj = stObj;
 							foreach (var load in newStObj.Target.Descendants.OfType<IInstructionWithVariableOperand>())
 								if ((load is LdLoc || load is LdLoca) && load.Variable == v)
 									load.Variable = finalSlot;
 							initializerBlock.Instructions.Add(newStObj);
 							break;
 						case StLoc stLoc:
-							var newStLoc = (StLoc)stLoc.Clone();
+							var newStLoc = stLoc;
 							initializerBlock.Instructions.Add(newStLoc);
 							break;
 					}
@@ -167,6 +168,8 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			// in the list of possible index variables.
 			// Index variables are used to implement dictionary initializers.
 			if (instructions[pos] is StLoc stloc && stloc.Variable.Kind == VariableKind.Local && stloc.Variable.IsSingleDefinition) {
+				if (!context.Settings.DictionaryInitializers)
+					return false;
 				if (stloc.Value.Descendants.OfType<IInstructionWithVariableOperand>().Any(ld => ld.Variable == target && (ld is LdLoc || ld is LdLoca)))
 					return false;
 				possibleIndexVariables.Add(stloc.Variable, (stloc.ChildIndex, stloc.Value));
@@ -254,7 +257,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 						instruction = call.Arguments[0];
 						if (method.IsAccessor) {
 							var property = method.AccessorOwner as IProperty;
-							var isGetter = property?.Getter == method;
+							var isGetter = method.Equals(property?.Getter);
 							var indices = call.Arguments.Skip(1).Take(call.Arguments.Count - (isGetter ? 1 : 2)).ToArray();
 							if (possibleIndexVariables != null) {
 								// Mark all index variables as used

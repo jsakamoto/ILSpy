@@ -19,11 +19,24 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 
 namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 {
 	public class QueryExpressions
 	{
+		public class HbmParam
+		{
+			public string Name {
+				get;
+				set;
+			}
+			public string[] Text {
+				get;
+				set;
+			}
+		}
+
 		public class Customer
 		{
 			public int CustomerID;
@@ -54,7 +67,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object MultipleWhere()
 		{
-			return from c in this.customers
+			return from c in customers
 				   where c.Orders.Count() > 10
 				   where c.Country == "DE"
 				   select c;
@@ -62,7 +75,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object SelectManyFollowedBySelect()
 		{
-			return from c in this.customers
+			return from c in customers
 				   from o in c.Orders
 				   select new {
 					   c.Name,
@@ -73,7 +86,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object SelectManyFollowedByOrderBy()
 		{
-			return from c in this.customers
+			return from c in customers
 				   from o in c.Orders
 				   orderby o.Total descending
 				   select new {
@@ -85,7 +98,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object MultipleSelectManyFollowedBySelect()
 		{
-			return from c in this.customers
+			return from c in customers
 				   from o in c.Orders
 				   from d in o.Details
 				   select new {
@@ -97,7 +110,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object MultipleSelectManyFollowedByLet()
 		{
-			return from c in this.customers
+			return from c in customers
 				   from o in c.Orders
 				   from d in o.Details
 				   let x = (decimal)d.Quantity * d.UnitPrice
@@ -110,7 +123,7 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object FromLetWhereSelect()
 		{
-			return from o in this.orders
+			return from o in orders
 				   let t = o.Details.Sum((OrderDetail d) => d.UnitPrice * (decimal)d.Quantity)
 				   where t >= 1000m
 				   select new {
@@ -121,16 +134,29 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object MultipleLet()
 		{
-			return from a in this.customers
+			return from a in customers
 				   let b = a.Country
 				   let c = a.Name
 				   select b + c;
 		}
 
+		public object HibernateApplyGeneratorQuery()
+		{
+			return (from pi in customers.GetType().GetProperties()
+					let pname = pi.Name
+					let pvalue = pi.GetValue(customers, null)
+					select new HbmParam {
+							Name = pname,
+							Text = new string[1] {
+								(pvalue == null) ? "null" : pvalue.ToString()
+							}
+						}).ToArray();
+		}
+
 		public object Join()
 		{
-			return from c in this.customers
-				   join o in this.orders on c.CustomerID equals o.CustomerID
+			return from c in customers
+				   join o in orders on c.CustomerID equals o.CustomerID
 				   select new {
 					   c.Name,
 					   o.OrderDate,
@@ -140,8 +166,8 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object JoinInto()
 		{
-			return from c in this.customers
-				   join o in this.orders on c.CustomerID equals o.CustomerID into co
+			return from c in customers
+				   join o in orders on c.CustomerID equals o.CustomerID into co
 				   let n = co.Count()
 				   where n >= 10
 				   select new {
@@ -152,27 +178,27 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 
 		public object OrderBy()
 		{
-			return from o in this.orders
+			return from o in orders
 				   orderby o.Customer.Name, o.Total descending
 				   select o;
 		}
 
 		public object GroupBy()
 		{
-			return from c in this.customers
+			return from c in customers
 				   group c.Name by c.Country;
 		}
 
 		public object ExplicitType()
 		{
-			return from Customer c in this.customers
+			return from Customer c in customers
 				   where c.City == "London"
 				   select c;
 		}
 
 		public object QueryContinuation()
 		{
-			return from c in this.customers
+			return from c in customers
 				   group c by c.Country into g
 				   select new {
 					   Country = g.Key,
@@ -185,6 +211,33 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 			return from x in bools
 				   where x
 				   select (x);
+		}
+
+		public static Maybe<TB> Cast<TA, TB>(Maybe<TA> a) where TB : class
+		{
+			return from m in a
+				   let t = m as TB
+				   where t != null
+				   select t;
+		}
+	}
+
+	public struct Maybe<T>
+	{
+		public T Value;
+		public bool HasValue;
+	}
+
+	public static class MaybeExtensions
+	{
+		public static Maybe<TResult> Select<T, TResult>(this Maybe<T> a, Func<T, TResult> fn)
+		{
+			return default(Maybe<TResult>);
+		}
+
+		public static Maybe<T> Where<T>(this Maybe<T> a, Func<T, bool> predicate)
+		{
+			return default(Maybe<T>);
 		}
 	}
 }
