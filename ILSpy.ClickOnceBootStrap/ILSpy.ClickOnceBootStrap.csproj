@@ -97,10 +97,6 @@
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
       <SubType>Designer</SubType>
     </EmbeddedResource>
-    <Content Include="..\ILSpy\bin\Release\net46\ILSpy.exe.config">
-      <Link>.bin\ILSpy.exe.config</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
     <None Include="Properties\AssemblyInfo.template.cs" />
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>
@@ -121,83 +117,25 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
+  
+  <!-- link of ILSpy binary files -->
   <ItemGroup>
-    <Content Include="..\ILSpy\bin\Release\net46\Humanizer.dll">
-      <Link>.bin\Humanizer.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\ICSharpCode.AvalonEdit.dll">
-      <Link>.bin\ICSharpCode.AvalonEdit.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\ICSharpCode.Decompiler.dll">
-      <Link>.bin\ICSharpCode.Decompiler.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\ICSharpCode.TreeView.dll">
-      <Link>.bin\ICSharpCode.TreeView.dll</Link>
+    <Content Include="..\ILSpy\bin\Release\net46\ILSpy.exe.config">
+      <Link>.bin\ILSpy.exe.config</Link>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="..\ILSpy\bin\Release\net46\ILSpy.exe">
       <Link>.bin\ILSpy.exe</Link>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\Microsoft.VisualStudio.Composition.dll">
-      <Link>.bin\Microsoft.VisualStudio.Composition.dll</Link>
+    <!-- See also: https://stackoverflow.com/a/5320306/1268000 -->
+    <Content Include="..\ILSpy\bin\Release\net46\*.dll">
+      <Link>.bin\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\Microsoft.VisualStudio.Validation.dll">
-      <Link>.bin\Microsoft.VisualStudio.Validation.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\Mono.Cecil.dll">
-      <Link>.bin\Mono.Cecil.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\Mono.Cecil.Mdb.dll">
-      <Link>.bin\Mono.Cecil.Mdb.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\Mono.Cecil.Pdb.dll">
-      <Link>.bin\Mono.Cecil.Pdb.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\Mono.Cecil.Rocks.dll">
-      <Link>.bin\Mono.Cecil.Rocks.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Collections.Immutable.dll">
-      <Link>.bin\System.Collections.Immutable.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Composition.AttributedModel.dll">
-      <Link>.bin\System.Composition.AttributedModel.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Composition.Convention.dll">
-      <Link>.bin\System.Composition.Convention.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Composition.Hosting.dll">
-      <Link>.bin\System.Composition.Hosting.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Composition.Runtime.dll">
-      <Link>.bin\System.Composition.Runtime.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Composition.TypedParts.dll">
-      <Link>.bin\System.Composition.TypedParts.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.Threading.Tasks.Dataflow.dll">
-      <Link>.bin\System.Threading.Tasks.Dataflow.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\ILSpy\bin\Release\net46\System.ValueTuple.dll">
-      <Link>.bin\System.ValueTuple.dll</Link>
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
+  </ItemGroup>
+  
+  <ItemGroup>
     <Content Include="ILSpy-Large.ico" />
   </ItemGroup>
   <ItemGroup>
