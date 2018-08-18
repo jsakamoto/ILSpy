@@ -16,9 +16,12 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+using System;
 using System.Linq;
 using ICSharpCode.Decompiler.CSharp.Syntax;
 using ICSharpCode.Decompiler.CSharp.Syntax.PatternMatching;
+using ICSharpCode.Decompiler.TypeSystem;
+using ICSharpCode.Decompiler.Util;
 
 namespace ICSharpCode.Decompiler.CSharp.Transforms
 {
@@ -34,6 +37,8 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 	/// </remarks>
 	class PrettifyAssignments : DepthFirstAstVisitor, IAstTransform
 	{
+		TransformContext context;
+
 		public override void VisitAssignmentExpression(AssignmentExpression assignment)
 		{
 			base.VisitAssignmentExpression(assignment);
@@ -49,12 +54,12 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 					}
 				}
 			}
-			// TODO: context.Settings.IntroduceIncrementAndDecrement
-			if (assignment.Operator == AssignmentOperatorType.Add || assignment.Operator == AssignmentOperatorType.Subtract) {
+			if (context.Settings.IntroduceIncrementAndDecrement && assignment.Operator == AssignmentOperatorType.Add || assignment.Operator == AssignmentOperatorType.Subtract) {
 				// detect increment/decrement
-				if (assignment.Right.IsMatch(new PrimitiveExpression(1))) {
+				var rr = assignment.Right.GetResolveResult();
+				if (rr.IsCompileTimeConstant && rr.Type.IsCSharpPrimitiveIntegerType() && CSharpPrimitiveCast.Cast(rr.Type.GetTypeCode(), 1, false).Equals(rr.ConstantValue)) {
 					// only if it's not a custom operator
-					if (assignment.Annotation<IL.CallInstruction>() == null) {
+					if (assignment.Annotation<IL.CallInstruction>() == null && assignment.Annotation<IL.UserDefinedCompoundAssign>() == null && assignment.Annotation<IL.DynamicCompoundAssign>() == null) {
 						UnaryOperatorType type;
 						// When the parent is an expression statement, pre- or post-increment doesn't matter;
 						// so we can pick post-increment which is more commonly used (for (int i = 0; i < x; i++))
@@ -117,7 +122,12 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 
 		void IAstTransform.Run(AstNode node, TransformContext context)
 		{
-			node.AcceptVisitor(this);
+			this.context = context;
+			try {
+				node.AcceptVisitor(this);
+			} finally {
+				this.context = null;
+			}
 		}
 	}
 }

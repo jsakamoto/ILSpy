@@ -63,7 +63,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			loopCounters = CollectLoopCounters(function);
 			foreach (var f in function.Descendants.OfType<ILFunction>()) {
 				if (f.Method != null) {
-					if (f.Method.IsAccessor && f.Method.Parameters.Count > 0) {
+					if (IsSetOrEventAccessor(f.Method) && f.Method.Parameters.Count > 0) {
 						for (int i = 0; i < f.Method.Parameters.Count - 1; i++) {
 							AddExistingName(reservedVariableNames, f.Method.Parameters[i].Name);
 						}
@@ -119,6 +119,15 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			foreach (ILFunction f in function.Descendants.OfType<ILFunction>().Reverse()) {
 				PerformAssignment(f);
 			}
+		}
+
+		bool IsSetOrEventAccessor(IMethod method)
+		{
+			if (method.AccessorOwner is IProperty p)
+				return p.Setter == method;
+			if (method.AccessorOwner is IEvent e)
+				return e.InvokeAccessor != method;
+			return false;
 		}
 
 		void PerformAssignment(ILFunction function)
@@ -251,6 +260,15 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				}
 			}
 			if (string.IsNullOrEmpty(proposedName)) {
+				var proposedNameForAddress = variable.AddressInstructions.OfType<LdLoca>()
+					.Select(arg => arg.Parent is CallInstruction c ? c.GetParameter(arg.ChildIndex)?.Name : null)
+					.Where(arg => !string.IsNullOrWhiteSpace(arg))
+					.Except(currentFieldNames).ToList();
+				if (proposedNameForAddress.Count > 0) {
+					proposedName = proposedNameForAddress[0];
+				}
+			}
+			if (string.IsNullOrEmpty(proposedName)) {
 				var proposedNameForStores = variable.StoreInstructions.OfType<StLoc>()
 					.Select(expr => GetNameFromInstruction(expr.Value))
 					.Except(currentFieldNames).ToList();
@@ -360,7 +378,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				name = "array";
 			} else if (type is PointerType) {
 				name = "ptr";
-			} else if (type.Kind == TypeKind.TypeParameter || type.Kind == TypeKind.Unknown) {
+			} else if (type.Kind == TypeKind.TypeParameter || type.Kind == TypeKind.Unknown || type.Kind == TypeKind.Dynamic) {
 				name = "val";
 			} else if (type.Kind == TypeKind.ByReference) {
 				name = "reference";

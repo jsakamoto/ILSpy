@@ -17,16 +17,46 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
 
-namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
+namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty.InitializerTests
 {
-	public class InitializerTests
+	public static class Extensions
+	{
+		public static void Add(this TestCases.CustomList<int> inst, int a, int b)
+		{
+		}
+	}
+
+	public class TestCases
 	{
 		#region Types and helpers
+		public class CustomList<T> : IEnumerable<T>, IEnumerable
+		{
+			public IEnumerator<T> GetEnumerator()
+			{
+				throw new NotImplementedException();
+			}
+
+			IEnumerator IEnumerable.GetEnumerator()
+			{
+				throw new NotImplementedException();
+			}
+
+			public void Add<T2>(string name)
+			{
+				new Dictionary<string, Type>().Add(name, typeof(T2));
+			}
+
+			public void Add(params int[] ints)
+			{
+			}
+		}
+
 		public class C
 		{
 			public int Z;
@@ -197,6 +227,70 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 			return c;
 		}
 
+		public static void InvalidIndices(int a)
+		{
+			int[] array = new int[1];
+			array[1] = a;
+			X(Y(), array);
+		}
+
+		public static void InvalidIndices2(int a)
+		{
+#pragma warning disable 251
+			int[] array = new int[1];
+			array[-1] = a;
+			X(Y(), array);
+#pragma warning restore
+		}
+
+		public static void IndicesInWrongOrder(int a, int b)
+		{
+			int[] array = new int[5];
+			array[2] = b;
+			array[1] = a;
+			X(Y(), array);
+		}
+
+		public static void ExtensionMethodInCollectionInitializer()
+		{
+#if CS60
+			X(Y(), new CustomList<int> {
+				{
+					1,
+					2
+				}
+			});
+#else
+			CustomList<int> customList = new CustomList<int>();
+			customList.Add(1, 2);
+			X(Y(), customList);
+#endif
+		}
+
+		public static void NoCollectionInitializerBecauseOfTypeArguments()
+		{
+			CustomList<int> customList = new CustomList<int>();
+			customList.Add<int>("int");
+			Console.WriteLine(customList);
+		}
+
+		public static void CollectionInitializerWithParamsMethod()
+		{
+			X(Y(), new CustomList<int> {
+				{
+					1,
+					2,
+					3,
+					4,
+					5,
+					6,
+					7,
+					8,
+					9,
+					10
+				}
+			});
+		}
 
 		public static void CollectionInitializerList()
 		{
@@ -505,6 +599,17 @@ namespace ICSharpCode.Decompiler.Tests.TestCases.Pretty
 		{
 			NoOp(new Guid?[1] {
 				Guid.Empty
+			});
+		}
+
+
+		private void Issue907_Test3(string text)
+		{
+			X(Y(), new Dictionary<string, object> {
+				{
+					"",
+					text
+				}
 			});
 		}
 	}

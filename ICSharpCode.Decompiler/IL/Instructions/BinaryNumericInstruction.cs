@@ -91,7 +91,6 @@ namespace ICSharpCode.Decompiler.IL
 			this.RightInputType = rightInputType;
 			this.IsLifted = isLifted;
 			this.resultType = ComputeResultType(op, LeftInputType, RightInputType);
-			Debug.Assert(resultType != StackType.Unknown);
 		}
 		
 		internal static StackType ComputeResultType(BinaryNumericOperator op, StackType left, StackType right)
@@ -148,7 +147,7 @@ namespace ICSharpCode.Decompiler.IL
 			}
 		}
 
-		string GetOperatorName(BinaryNumericOperator @operator)
+		internal static string GetOperatorName(BinaryNumericOperator @operator)
 		{
 			switch (@operator) {
 				case BinaryNumericOperator.Add:

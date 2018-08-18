@@ -28,7 +28,7 @@ namespace ICSharpCode.Decompiler.Tests
 	[TestFixture, Parallelizable(ParallelScope.All)]
 	public class ILPrettyTestRunner
 	{
-		static readonly string TestCasePath = DecompilerTestBase.TestCasePath + "/ILPretty";
+		static readonly string TestCasePath = Tester.TestCasePath + "/ILPretty";
 
 		[Test]
 		public void AllFilesHaveTests()
@@ -92,6 +92,30 @@ namespace ICSharpCode.Decompiler.Tests
 		public void FSharpUsing_Release()
 		{
 			Run(settings: new DecompilerSettings { RemoveDeadCode = true });
+		}
+
+		[Test]
+		public void CS1xSwitch_Debug()
+		{
+			Run();
+		}
+
+		[Test]
+		public void CS1xSwitch_Release()
+		{
+			Run();
+		}
+
+		[Test]
+		public void Issue1145()
+		{
+			Run();
+		}
+
+		[Test]
+		public void Issue1157()
+		{
+			Run();
 		}
 
 		[Test, Ignore("?")]

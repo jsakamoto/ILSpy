@@ -63,6 +63,10 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 
 	public static partial class Tester
 	{
+		public static readonly string TestCasePath = Path.Combine(
+	Path.GetDirectoryName(typeof(Tester).Assembly.Location),
+	"../../../TestCases");
+
 		public static string AssembleIL(string sourceFileName, AssemblerOptions options = AssemblerOptions.UseDebug)
 		{
 			string ilasmPath = Path.Combine(Environment.GetEnvironmentVariable("windir"), @"Microsoft.NET\Framework\v4.0.30319\ilasm.exe");
@@ -110,7 +114,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 		{
 			if (asmOptions.HasFlag(AssemblerOptions.UseOwnDisassembler)) {
 				using (ModuleDefinition module = ModuleDefinition.ReadModule(sourceFileName))
-				using (var writer = new StreamWriter(outputFile)) {
+				using (var writer = new StringWriter()) {
 					module.Name = Path.GetFileNameWithoutExtension(outputFile);
 					var output = new PlainTextOutput(writer);
 					ReflectionDisassembler rd = new ReflectionDisassembler(output, CancellationToken.None);
@@ -122,6 +126,8 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 					rd.WriteModuleHeader(module, skipMVID: true);
 					output.WriteLine();
 					rd.WriteModuleContents(module);
+
+					File.WriteAllText(outputFile, ReplacePrivImplDetails(writer.ToString()));
 				}
 				return outputFile;
 			}
@@ -157,9 +163,15 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 			il = Regex.Replace(il, @"^// +Copyright .* Microsoft.*\r?\n", "", RegexOptions.Multiline);
 			// filename may contain full path
 			il = Regex.Replace(il, @"^// WARNING: Created Win32 resource file.*\r?\n", "", RegexOptions.Multiline);
+			il = ReplacePrivImplDetails(il);
 			File.WriteAllText(outputFile, il);
 
 			return outputFile;
+		}
+
+		private static string ReplacePrivImplDetails(string il)
+		{
+			return Regex.Replace(il, @"'<PrivateImplementationDetails>\{[0-9A-F-]+\}'", "'<PrivateImplementationDetails>'");
 		}
 
 		static readonly Lazy<IEnumerable<MetadataReference>> defaultReferences = new Lazy<IEnumerable<MetadataReference>>(delegate {
@@ -170,7 +182,9 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 					MetadataReference.CreateFromFile(Path.Combine(refAsmPath, "mscorlib.dll")),
 					MetadataReference.CreateFromFile(Path.Combine(refAsmPath, "System.dll")),
 					MetadataReference.CreateFromFile(Path.Combine(refAsmPath, "System.Core.dll")),
-					MetadataReference.CreateFromFile(Path.Combine(refAsmPath, "System.Xml.dll"))
+					MetadataReference.CreateFromFile(Path.Combine(refAsmPath, "System.Xml.dll")),
+					MetadataReference.CreateFromFile(Path.Combine(refAsmPath, "Microsoft.CSharp.dll")),
+					MetadataReference.CreateFromFile(typeof(ValueTuple).Assembly.Location)
 			};
 		});
 		
@@ -297,6 +311,7 @@ namespace ICSharpCode.Decompiler.Tests.Helpers
 				options.ReferencedAssemblies.Add("System.dll");
 				options.ReferencedAssemblies.Add("System.Core.dll");
 				options.ReferencedAssemblies.Add("System.Xml.dll");
+				options.ReferencedAssemblies.Add("Microsoft.CSharp.dll");
 				CompilerResults results = provider.CompileAssemblyFromFile(options, sourceFileNames.ToArray());
 				if (results.Errors.Cast<CompilerError>().Any(e => !e.IsWarning)) {
 					StringBuilder b = new StringBuilder("Compiler error:");

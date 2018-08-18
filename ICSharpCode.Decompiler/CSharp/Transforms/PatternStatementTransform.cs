@@ -257,6 +257,8 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 			var indexVariable = m.Get<IdentifierExpression>("indexVariable").Single().GetILVariable();
 			var arrayVariable = m.Get<IdentifierExpression>("arrayVariable").Single().GetILVariable();
 			var loopContainer = forStatement.Annotation<IL.BlockContainer>();
+			if (itemVariable == null || indexVariable == null || arrayVariable == null)
+				return null;
 			if (!itemVariable.IsSingleDefinition || (itemVariable.CaptureScope != null && itemVariable.CaptureScope != loopContainer))
 				return null;
 			if (indexVariable.StoreCount != 2 || indexVariable.LoadCount != 3 || indexVariable.AddressCount != 0)
@@ -391,7 +393,7 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 				if (!m.Success) break;
 				if (upperBounds == null) {
 					collection = m.Get<IdentifierExpression>("collection").Single().GetILVariable();
-					if (!(collection.Type is Decompiler.TypeSystem.ArrayType arrayType))
+					if (!(collection?.Type is Decompiler.TypeSystem.ArrayType arrayType))
 						break;
 					upperBounds = new IL.ILVariable[arrayType.Dimensions];
 				} else {
@@ -414,7 +416,7 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 			statementsToDelete.Add(stmt);
 			statementsToDelete.Add(stmt.GetNextStatement());
 			var itemVariable = foreachVariable.GetILVariable();
-			if (!itemVariable.IsSingleDefinition
+			if (itemVariable == null || !itemVariable.IsSingleDefinition
 				|| !upperBounds.All(ub => ub.IsSingleDefinition && ub.LoadCount == 1)
 				|| !lowerBounds.All(lb => lb.StoreCount == 2 && lb.LoadCount == 3 && lb.AddressCount == 0))
 				return null;
@@ -509,6 +511,18 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 				RemoveCompilerGeneratedAttribute(property.Setter.Attributes);
 				property.Getter.Body = null;
 				property.Setter.Body = null;
+
+				// Add C# 7.3 attributes on backing field:
+				var attributes = fieldInfo.Attributes
+					.Where(a => !attributeTypesToRemoveFromAutoProperties.Any(t => t == a.AttributeType.FullName))
+					.Select(context.TypeSystemAstBuilder.ConvertAttribute).ToArray();
+				if (attributes.Length > 0) {
+					var section = new AttributeSection {
+						AttributeTarget = "field"
+					};
+					section.Attributes.AddRange(attributes);
+					property.Attributes.Add(section);
+				}
 			}
 			// Since the property instance is not changed, we can continue in the visitor as usual, so return null
 			return null;
@@ -587,16 +601,19 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 		}
 
 		#region Automatic Events
+		static readonly Expression fieldReferencePattern = new Choice {
+			new IdentifierExpression(Pattern.AnyString),
+			new MemberReferenceExpression {
+				Target = new Choice { new ThisReferenceExpression(), new TypeReferenceExpression { Type = new AnyNode() } },
+				MemberName = Pattern.AnyString
+			}
+		};
+
 		static readonly Accessor automaticEventPatternV2 = new Accessor {
 			Attributes = { new Repeat(new AnyNode()) },
 			Body = new BlockStatement {
 				new AssignmentExpression {
-					Left = new NamedNode(
-						"field",
-						new MemberReferenceExpression {
-							Target = new Choice { new ThisReferenceExpression(), new TypeReferenceExpression { Type = new AnyNode() } },
-							MemberName = Pattern.AnyString
-						}),
+					Left = new NamedNode("field", fieldReferencePattern),
 					Operator = AssignmentOperatorType.Assign,
 					Right = new CastExpression(
 						new AnyNode("type"),
@@ -612,12 +629,7 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 				new AssignmentExpression {
 					Left = new NamedNode("var1", new IdentifierExpression(Pattern.AnyString)),
 					Operator = AssignmentOperatorType.Assign,
-					Right = new NamedNode(
-						"field",
-						new MemberReferenceExpression {
-							Target = new Choice { new ThisReferenceExpression(), new TypeReferenceExpression { Type = new AnyNode() } },
-							MemberName = Pattern.AnyString
-						})
+					Right = new NamedNode("field", fieldReferencePattern)
 				},
 				new DoWhileStatement {
 					EmbeddedStatement = new BlockStatement {
@@ -668,10 +680,10 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 							Left = new IdentifierExpressionBackreference("var1"),
 							Right = new InvocationExpression(new MemberReferenceExpression(new TypeReferenceExpression(new TypePattern(typeof(System.Threading.Interlocked)).ToType()),
 								"CompareExchange",
-								new AstType[] { new AnyNode("type") }), // type argument+
+								new AstType[] { new Repeat(new AnyNode()) }), // optional type arguments
 								new Expression[] { // arguments
 									new DirectionExpression { FieldDirection = FieldDirection.Ref, Expression = new Backreference("field") },
-									new CastExpression(new Backreference("type"), new InvocationExpression(new AnyNode("delegateCombine").ToExpression(), new IdentifierExpressionBackreference("var2"), new IdentifierExpression("value"))),
+									new CastExpression(new AnyNode("type"), new InvocationExpression(new AnyNode("delegateCombine").ToExpression(), new IdentifierExpressionBackreference("var2"), new IdentifierExpression("value"))),
 									new IdentifierExpressionBackreference("var1")
 								}
 							)
@@ -690,8 +702,20 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 		{
 			if (!m.Success)
 				return false;
-			if (m.Get<MemberReferenceExpression>("field").Single().MemberName != ev.Name)
-				return false; // field name must match event name
+			Expression fieldExpression = m.Get<Expression>("field").Single();
+			// field name must match event name
+			switch (fieldExpression) {
+				case IdentifierExpression identifier:
+					if (identifier.Identifier != ev.Name)
+						return false;
+					break;
+				case MemberReferenceExpression memberRef:
+					if (memberRef.MemberName != ev.Name)
+						return false;
+					break;
+				default:
+					return false;
+			}
 			if (!ev.ReturnType.IsMatch(m.Get("type").Single()))
 				return false; // variable types must match event type
 			var combineMethod = m.Get<AstNode>("delegateCombine").Single().Parent.GetSymbol() as IMethod;
@@ -706,37 +730,39 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 			"System.Runtime.CompilerServices.MethodImplAttribute"
 		};
 
-		bool CheckAutomaticEventV4(CustomEventDeclaration ev, out Match addMatch, out Match removeMatch)
+		static readonly string[] attributeTypesToRemoveFromAutoProperties = new[] {
+			"System.Runtime.CompilerServices.CompilerGeneratedAttribute",
+			"System.Diagnostics.DebuggerBrowsableAttribute"
+		};
+
+		bool CheckAutomaticEventV4(CustomEventDeclaration ev)
 		{
-			addMatch = removeMatch = default(Match);
-			addMatch = automaticEventPatternV4.Match(ev.AddAccessor);
+			Match addMatch = automaticEventPatternV4.Match(ev.AddAccessor);
 			if (!CheckAutomaticEventMatch(addMatch, ev, true))
 				return false;
-			removeMatch = automaticEventPatternV4.Match(ev.RemoveAccessor);
+			Match removeMatch = automaticEventPatternV4.Match(ev.RemoveAccessor);
 			if (!CheckAutomaticEventMatch(removeMatch, ev, false))
 				return false;
 			return true;
 		}
 
-		bool CheckAutomaticEventV2(CustomEventDeclaration ev, out Match addMatch, out Match removeMatch)
+		bool CheckAutomaticEventV2(CustomEventDeclaration ev)
 		{
-			addMatch = removeMatch = default(Match);
-			addMatch = automaticEventPatternV2.Match(ev.AddAccessor);
+			Match addMatch = automaticEventPatternV2.Match(ev.AddAccessor);
 			if (!CheckAutomaticEventMatch(addMatch, ev, true))
 				return false;
-			removeMatch = automaticEventPatternV2.Match(ev.RemoveAccessor);
+			Match removeMatch = automaticEventPatternV2.Match(ev.RemoveAccessor);
 			if (!CheckAutomaticEventMatch(removeMatch, ev, false))
 				return false;
 			return true;
 		}
 
-		bool CheckAutomaticEventV4MCS(CustomEventDeclaration ev, out Match addMatch, out Match removeMatch)
+		bool CheckAutomaticEventV4MCS(CustomEventDeclaration ev)
 		{
-			addMatch = removeMatch = default(Match);
-			addMatch = automaticEventPatternV4MCS.Match(ev.AddAccessor);
+			Match addMatch = automaticEventPatternV4MCS.Match(ev.AddAccessor);
 			if (!CheckAutomaticEventMatch(addMatch, ev, true))
 				return false;
-			removeMatch = automaticEventPatternV4MCS.Match(ev.RemoveAccessor);
+			Match removeMatch = automaticEventPatternV4MCS.Match(ev.RemoveAccessor);
 			if (!CheckAutomaticEventMatch(removeMatch, ev, false))
 				return false;
 			return true;
@@ -744,9 +770,12 @@ namespace ICSharpCode.Decompiler.CSharp.Transforms
 
 		EventDeclaration TransformAutomaticEvents(CustomEventDeclaration ev)
 		{
-			Match m1, m2;
-			if (!CheckAutomaticEventV4(ev, out m1, out m2) && !CheckAutomaticEventV2(ev, out m1, out m2) && !CheckAutomaticEventV4MCS(ev, out m1, out m2))
+			if (!ev.PrivateImplementationType.IsNull)
 				return null;
+			if (!ev.Modifiers.HasFlag(Modifiers.Abstract)) {
+				if (!CheckAutomaticEventV4(ev) && !CheckAutomaticEventV2(ev) && !CheckAutomaticEventV4MCS(ev))
+					return null;
+			}
 			RemoveCompilerGeneratedAttribute(ev.AddAccessor.Attributes, attributeTypesToRemoveFromAutoEvents);
 			EventDeclaration ed = new EventDeclaration();
 			ev.Attributes.MoveTo(ed.Attributes);

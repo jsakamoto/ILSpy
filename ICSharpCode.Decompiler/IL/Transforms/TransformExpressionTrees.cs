@@ -171,10 +171,6 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 
 		bool ReadParameters(ILInstruction initializer, IList<IParameter> parameters, IList<ILVariable> parameterVariables, ITypeResolveContext resolveContext)
 		{
-			if (!context.Function.Method.IsStatic) {
-				var thisParam = context.Function.Variables[0];
-				parameterVariables.Add(new ILVariable(VariableKind.Parameter, thisParam.Type, -1) { Name = "this" });
-			}
 			switch (initializer) {
 				case Block initializerBlock:
 					if (initializerBlock.Kind != BlockKind.ArrayInitializer)
@@ -190,7 +186,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 						var param = new ILVariable(VariableKind.Parameter, value.Item1, i) { Name = value.Item2 };
 						parameterMapping.Add(v, param);
 						parameterVariables.Add(param);
-						parameters.Add(new DefaultUnresolvedParameter(value.Item1.ToTypeReference(), value.Item2).CreateResolvedParameter(resolveContext));
+						parameters.Add(new DefaultParameter(value.Item1, value.Item2));
 						instructionsToRemove.Add((ILInstruction)v.StoreInstructions[0]);
 						i++;
 					}
@@ -1034,7 +1030,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			return false;
 		}
 
-		bool MatchGetTypeFromHandle(ILInstruction inst, out IType type)
+		internal static bool MatchGetTypeFromHandle(ILInstruction inst, out IType type)
 		{
 			type = null;
 			return inst is CallInstruction getTypeCall
