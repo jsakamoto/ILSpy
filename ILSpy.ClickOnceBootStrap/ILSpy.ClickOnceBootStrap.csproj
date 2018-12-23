@@ -26,8 +26,8 @@
     <ProductName>ILSpy</ProductName>
     <PublisherName>J.Sakamoto</PublisherName>
     <OpenBrowserOnPublish>false</OpenBrowserOnPublish>
-    <ApplicationRevision>0</ApplicationRevision>
-    <ApplicationVersion>3.2.0.0</ApplicationVersion>
+    <ApplicationRevision>1</ApplicationRevision>
+    <ApplicationVersion>3.2.0.1</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
@@ -62,7 +62,7 @@
     <SignManifests>true</SignManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>18AA83083ED8A8527A3720B7F496FF953C85ED1E</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>EEED6B7132F9C483D57ADFADDADA99BA2FB984F0</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
     <ManifestTimestampUrl>http://timestamp.verisign.com/scripts/timstamp.dll</ManifestTimestampUrl>
@@ -117,7 +117,6 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
-  
   <!-- link of ILSpy binary files -->
   <ItemGroup>
     <Content Include="..\ILSpy\bin\Release\net46\ILSpy.exe.config">
@@ -134,7 +133,6 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
-  
   <ItemGroup>
     <Content Include="ILSpy-Large.ico" />
   </ItemGroup>
