@@ -39,6 +39,9 @@
 			Command="Search"
 			Executed="SearchCommandExecuted" />
 	</Window.CommandBindings>
+	<Window.InputBindings>
+		<KeyBinding Key="R" Modifiers="Control" Command="{x:Static local:ILSpyCommands.Analyze}" />
+	</Window.InputBindings>
 	<Window.TaskbarItemInfo>
 		<TaskbarItemInfo />
 	</Window.TaskbarItemInfo>
@@ -50,6 +53,11 @@
 				<MenuItem Header="Show _internal types and members" IsCheckable="True" IsChecked="{Binding FilterSettings.ShowInternalApi}">
 					<MenuItem.Icon>
 						<Image Width="16" Height="16" Source="Images/PrivateInternal.png" />
+					</MenuItem.Icon>
+				</MenuItem>
+				<MenuItem Header="Show _all types and members" IsCheckable="True" IsChecked="{Binding FilterSettings.ShowAllApi}">
+					<MenuItem.Icon>
+						<Image Width="16" Height="16" Source="Images/ShowAll.png" />
 					</MenuItem.Icon>
 				</MenuItem>
 			</MenuItem>
@@ -76,6 +84,9 @@
 			<Separator />
 			<CheckBox IsChecked="{Binding FilterSettings.ShowInternalApi}" ToolTip="Show internal types and members">
 				<Image Width="16" Height="16" Source="Images/PrivateInternal.png" />
+			</CheckBox>
+			<CheckBox IsChecked="{Binding FilterSettings.ShowAllApi}" ToolTip="Show all types and members">
+				<Image Width="16" Height="16" Source="Images/ShowAll.png" />
 			</CheckBox>
 			<Separator />
 			<ComboBox Name="languageComboBox" DisplayMemberPath="Name" Width="100" MaxDropDownHeight="Auto"

@@ -38,8 +38,8 @@ using System.Diagnostics.CodeAnalysis;
 
 internal static class RevisionClass
 {
-	public const string Major = "3";
-	public const string Minor = "2";
+	public const string Major = "4";
+	public const string Minor = "0";
 	public const string Build = "0";
 	public const string Revision = "$INSERTREVISION$";
 	public const string VersionName = null;

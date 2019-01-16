@@ -88,7 +88,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			// in some cases it can be a compiler-generated local
 			if (inst == null || (inst.Variable.Kind != VariableKind.StackSlot && inst.Variable.Kind != VariableKind.Local))
 				return false;
-			if (IsImplicitTruncation(inst.Value, inst.Variable.Type)) {
+			if (IsImplicitTruncation(inst.Value, inst.Variable.Type, context.TypeSystem)) {
 				// 'stloc s' is implicitly truncating the value
 				return false;
 			}
@@ -112,19 +112,20 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					return false;
 				if (!SemanticHelper.IsPure(stobj.Target.Flags) || inst.Variable.IsUsedWithin(stobj.Target))
 					return false;
-				var newType = stobj.Target.InferType();
-				if (newType is ByReferenceType byref)
-					newType = byref.ElementType;
-				else if (newType is PointerType pointer)
-					newType = pointer.ElementType;
-				else
-					newType = stobj.Type;
-				if (IsImplicitTruncation(inst.Value, newType)) {
+				var pointerType = stobj.Target.InferType(context.TypeSystem);
+				IType newType = stobj.Type;
+				if (TypeUtils.IsCompatiblePointerTypeForMemoryAccess(pointerType, stobj.Type)) {
+					if (pointerType is ByReferenceType byref)
+						newType = byref.ElementType;
+					else if (pointerType is PointerType pointer)
+						newType = pointer.ElementType;
+				}
+				if (IsImplicitTruncation(inst.Value, newType, context.TypeSystem)) {
 					// 'stobj' is implicitly truncating the value
 					return false;
 				}
-				stobj.Type = newType;
 				context.Step("Inline assignment stobj", stobj);
+				stobj.Type = newType;
 				block.Instructions.Remove(localStore);
 				block.Instructions.Remove(stobj);
 				stobj.Value = inst.Value;
@@ -137,15 +138,23 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					return false;
 				if (call.ResultType != StackType.Void || call.Arguments.Count == 0)
 					return false;
-				if (!call.Method.Equals((call.Method.AccessorOwner as IProperty)?.Setter))
+				IProperty property = call.Method.AccessorOwner as IProperty;
+				if (property == null)
 					return false;
+				if (!call.Method.Equals(property.Setter))
+					return false;
+				if (!(property.IsIndexer || property.Setter.Parameters.Count == 1)) {
+					// this is a parameterized property, which cannot be expressed as C# code.
+					// setter calls are not valid in expression context, if property syntax cannot be used.
+					return false;
+				}
 				if (!call.Arguments.Last().MatchLdLoc(inst.Variable))
 					return false;
 				foreach (var arg in call.Arguments.SkipLast(1)) {
 					if (!SemanticHelper.IsPure(arg.Flags) || inst.Variable.IsUsedWithin(arg))
 						return false;
 				}
-				if (IsImplicitTruncation(inst.Value, call.Method.Parameters.Last().Type)) {
+				if (IsImplicitTruncation(inst.Value, call.Method.Parameters.Last().Type, context.TypeSystem)) {
 					// setter call is implicitly truncating the value
 					return false;
 				}
@@ -241,7 +250,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				// changes the return value of the expression, so this is only valid on block-level.
 				return false;
 			}
-			if (!IsCompoundStore(compoundStore, out var targetType, out var setterValue))
+			if (!IsCompoundStore(compoundStore, out var targetType, out var setterValue, context.TypeSystem))
 				return false;
 			// targetType = The type of the property/field/etc. being stored to.
 			// setterValue = The value being stored.
@@ -298,9 +307,21 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 					return false;
 				context.Step($"Compound assignment (dynamic binary)", compoundStore);
 				newInst = new DynamicCompoundAssign(dynamicBinaryOp.Operation, dynamicBinaryOp.BinderFlags, dynamicBinaryOp.Left, dynamicBinaryOp.LeftArgumentInfo, dynamicBinaryOp.Right, dynamicBinaryOp.RightArgumentInfo);
+			} else if (setterValue is Call concatCall && UserDefinedCompoundAssign.IsStringConcat(concatCall.Method)) {
+				// setterValue is a string.Concat() invocation
+				if (concatCall.Arguments.Count != 2)
+					return false; // for now we only support binary compound assignments
+				if (!targetType.IsKnownType(KnownTypeCode.String))
+					return false;
+				if (!IsMatchingCompoundLoad(concatCall.Arguments[0], compoundStore, forbiddenVariable: storeInSetter?.Variable))
+					return false;
+				context.Step($"Compound assignment (string concatenation)", compoundStore);
+				newInst = new UserDefinedCompoundAssign(concatCall.Method, CompoundAssignmentType.EvaluatesToNewValue,
+					concatCall.Arguments[0], concatCall.Arguments[1]);
 			} else {
 				return false;
 			}
+			newInst.AddILRange(setterValue.ILRange);
 			if (storeInSetter != null) {
 				storeInSetter.Value = newInst;
 				newInst = storeInSetter;
@@ -325,17 +346,24 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				return false;
 			if (inst.Variable.Kind != VariableKind.StackSlot)
 				return false;
-			Debug.Assert(!inst.Variable.Type.IsSmallIntegerType());
 			if (!(nextInst.Variable.Kind == VariableKind.Local || nextInst.Variable.Kind == VariableKind.Parameter))
 				return false;
 			if (!nextInst.Value.MatchLdLoc(inst.Variable))
 				return false;
-			if (IsImplicitTruncation(inst.Value, inst.Variable.Type)) {
+			if (IsImplicitTruncation(inst.Value, inst.Variable.Type, context.TypeSystem)) {
 				// 'stloc s' is implicitly truncating the stack value
 				return false;
 			}
-			if (IsImplicitTruncation(inst.Value, nextInst.Variable.Type)) {
+			if (IsImplicitTruncation(inst.Value, nextInst.Variable.Type, context.TypeSystem)) {
 				// 'stloc l' is implicitly truncating the stack value
+				return false;
+			}
+			if (nextInst.Variable.StackType == StackType.Ref) {
+				// ref locals need to be initialized when they are declared, so
+				// we can only use inline assignments when we know that the
+				// ref local is definitely assigned.
+				// We don't have an easy way to check for that in this transform,
+				// so avoid inline assignments to ref locals for now.
 				return false;
 			}
 			context.Step("Inline assignment to local variable", inst);
@@ -351,7 +379,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		/// Gets whether 'stobj type(..., value)' would evaluate to a different value than 'value'
 		/// due to implicit truncation.
 		/// </summary>
-		static internal bool IsImplicitTruncation(ILInstruction value, IType type, bool allowNullableValue = false)
+		static internal bool IsImplicitTruncation(ILInstruction value, IType type, ICompilation compilation, bool allowNullableValue = false)
 		{
 			if (!type.IsSmallIntegerType()) {
 				// Implicit truncation in ILAst only happens for small integer types;
@@ -381,10 +409,10 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			} else if (value is Comp) {
 				return false; // comp returns 0 or 1, which always fits
 			} else if (value is IfInstruction ifInst) {
-				return IsImplicitTruncation(ifInst.TrueInst, type, allowNullableValue)
-					|| IsImplicitTruncation(ifInst.FalseInst, type, allowNullableValue);
+				return IsImplicitTruncation(ifInst.TrueInst, type, compilation, allowNullableValue)
+					|| IsImplicitTruncation(ifInst.FalseInst, type, compilation, allowNullableValue);
 			} else {
-				IType inferredType = value.InferType();
+				IType inferredType = value.InferType(compilation);
 				if (allowNullableValue) {
 					inferredType = NullableType.GetUnderlyingType(inferredType);
 				}
@@ -436,14 +464,14 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		/// <summary>
 		/// Gets whether 'inst' is a possible store for use as a compound store.
 		/// </summary>
-		static bool IsCompoundStore(ILInstruction inst, out IType storeType, out ILInstruction value)
+		static bool IsCompoundStore(ILInstruction inst, out IType storeType, out ILInstruction value, ICompilation compilation)
 		{
 			value = null;
 			storeType = null;
 			if (inst is StObj stobj) {
 				// stobj.Type may just be 'int' (due to stind.i4) when we're actually operating on a 'ref MyEnum'.
 				// Try to determine the real type of the object we're modifying:
-				storeType = stobj.Target.InferType();
+				storeType = stobj.Target.InferType(compilation);
 				if (storeType is ByReferenceType refType) {
 					storeType = refType.ElementType;
 				} else if (storeType is PointerType pointerType) {
@@ -510,7 +538,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 		bool TransformPostIncDecOperatorWithInlineStore(Block block, int pos)
 		{
 			var store = block.Instructions[pos];
-			if (!IsCompoundStore(store, out var targetType, out var value))
+			if (!IsCompoundStore(store, out var targetType, out var value, context.TypeSystem))
 				return false;
 			StLoc stloc;
 			var binary = UnwrapSmallIntegerConv(value, out var conv) as BinaryNumericInstruction;
@@ -535,7 +563,7 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 				return false;
 			if (!IsMatchingCompoundLoad(stloc.Value, store, stloc.Variable))
 				return false;
-			if (IsImplicitTruncation(stloc.Value, stloc.Variable.Type))
+			if (IsImplicitTruncation(stloc.Value, stloc.Variable.Type, context.TypeSystem))
 				return false;
 			context.Step("TransformPostIncDecOperatorWithInlineStore", store);
 			if (binary != null) {
@@ -565,9 +593,9 @@ namespace ICSharpCode.Decompiler.IL.Transforms
 			var store = block.Instructions.ElementAtOrDefault(i + 1);
 			if (inst == null || store == null)
 				return false;
-			if (!IsCompoundStore(store, out var targetType, out var value))
+			if (!IsCompoundStore(store, out var targetType, out var value, context.TypeSystem))
 				return false;
-			if (IsImplicitTruncation(inst.Value, targetType)) {
+			if (IsImplicitTruncation(inst.Value, targetType, context.TypeSystem)) {
 				// 'stloc l' is implicitly truncating the value
 				return false;
 			}

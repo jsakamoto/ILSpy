@@ -47,7 +47,6 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		private BlockTransformContext context;
 		private ControlFlowNode cfgNode;
 		private BlockContainer currentContainer;
-		private Block continueBlock;
 
 		/// <summary>
 		/// Builds structured control flow for the block associated with the control flow node.
@@ -60,9 +59,6 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		{
 			this.context = context;
 			currentContainer = (BlockContainer)block.Parent;
-
-			// for detection of continue statements
-			continueBlock = GuessContinueBlock();
 
 			// We only embed blocks into this block if they aren't referenced anywhere else,
 			// so those blocks are dominated by this block.
@@ -88,7 +84,7 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		/// </summary>
 		private void HandleIfInstruction(Block block, IfInstruction ifInst)
 		{
-			while (InlineTrueBranch(ifInst) || InlineExitBranch(block)) {
+			while (InlineTrueBranch(block, ifInst) || InlineExitBranch(block)) {
 				PickBetterBlockExit(block, ifInst);
 				MergeCommonBranches(block, ifInst);
 				SwapEmptyThen(ifInst);
@@ -105,16 +101,30 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		/// 
 		/// Only inlines branches that are strictly dominated by this block (incoming edge count == 1)
 		/// </summary>
-		private bool InlineTrueBranch(IfInstruction ifInst)
+		private bool InlineTrueBranch(Block block, IfInstruction ifInst)
 		{
-			if (!CanInline(ifInst.TrueInst))
+			if (!CanInline(ifInst.TrueInst)) {
+				if (block.Instructions.SecondToLastOrDefault() == ifInst && ifInst.FalseInst.MatchNop()) {
+					var exitInst = block.Instructions.Last();
+					if (DetectExitPoints.CompatibleExitInstruction(ifInst.TrueInst, exitInst)) {
+						// if (...) exitInst; exitInst;
+						context.Step("Use empty block as then-branch", ifInst.TrueInst);
+						ifInst.TrueInst = new Nop() { ILRange = ifInst.TrueInst.ILRange };
+						// false, because we didn't inline a real block
+						// this will cause HandleIfInstruction() to attempt to inline the exitInst.
+						return false;
+					}
+				}
 				return false;
+			}
 
 			context.Step("Inline block as then-branch", ifInst.TrueInst);
 			// The targetBlock was already processed, and is ready to embed
 			var targetBlock = ((Branch)ifInst.TrueInst).TargetBlock;
+			targetBlock.AddRef();  // Peformance: avoid temporarily disconnecting targetBlock
 			targetBlock.Remove();
 			ifInst.TrueInst = targetBlock;
+			targetBlock.ReleaseRef();
 
 			return true;
 		}
@@ -325,6 +335,8 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 			       && ThenInstIsSingleExit(elseIfInst);
 		}
 
+		private void InvertIf(Block block, IfInstruction ifInst) => InvertIf(block, ifInst, context);
+
 		/// <summary>
 		///   if (cond) { then... }
 		///   else...;
@@ -335,7 +347,7 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		/// 
 		/// Assumes ifInst does not have an else block
 		/// </summary>
-		private void InvertIf(Block block, IfInstruction ifInst)
+		internal static void InvertIf(Block block, IfInstruction ifInst, ILTransformContext context)
 		{
 			Debug.Assert(ifInst.Parent == block);
 			
@@ -413,14 +425,26 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		/// </summary>
 		private void OrderIfBlocks(IfInstruction ifInst)
 		{
-			if (IsEmpty(ifInst.FalseInst) || ifInst.TrueInst.ILRange.Start <= ifInst.FalseInst.ILRange.Start)
+			if (IsEmpty(ifInst.FalseInst) || GetILRange(ifInst.TrueInst).Start <= GetILRange(ifInst.FalseInst).Start)
 				return;
 
 			context.Step("Swap then-branch with else-branch to match IL order", ifInst);
 			var oldTrue = ifInst.TrueInst;
+			oldTrue.AddRef(); // Peformance: avoid temporarily disconnecting oldTrue
 			ifInst.TrueInst = ifInst.FalseInst;
 			ifInst.FalseInst = oldTrue;
+			oldTrue.ReleaseRef();
 			ifInst.Condition = Comp.LogicNot(ifInst.Condition);
+		}
+
+		public static Interval GetILRange(ILInstruction inst)
+		{
+			// some compilers merge the leave instructions for different arguments using stack variables
+			// these get split and inlined, but the ILRange of the value remains a better indicator of the actual location
+			if (inst is Leave leave && !leave.Value.MatchNop())
+				return leave.Value.ILRange;
+
+			return inst.ILRange;
 		}
 
 		/// <summary>
@@ -472,7 +496,6 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 					// breaks have highest priority in a switch
 					if ((keyword1 == Keyword.Break) != (keyword2 == Keyword.Break))
 						return keyword1 == Keyword.Break ? 1 : -1;
-
 				} else {
 					// breaks have lowest priority
 					if ((keyword1 == Keyword.Break) != (keyword2 == Keyword.Break))
@@ -498,12 +521,15 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 
 			if (strongly)
 				return 0;
-
-			if (exit1.MatchBranch(out var block1) && exit2.MatchBranch(out var block2)) {
-				// prefer arranging stuff in IL order
-				return block1.ILRange.Start.CompareTo(block2.ILRange.Start);
-			}
+			
 			// prefer arranging stuff in IL order
+			if (exit1.MatchBranch(out var block1) && exit2.MatchBranch(out var block2))
+				return block1.ILRange.Start.CompareTo(block2.ILRange.Start);
+
+			// use the IL offsets of the arguments of leave instructions instead of the leaves themselves if possible
+			if (exit1.MatchLeave(out var _, out var arg1) && exit2.MatchLeave(out var _, out var arg2))
+				return arg1.ILRange.Start.CompareTo(arg2.ILRange.Start);
+				
 			return exit1.ILRange.Start.CompareTo(exit2.ILRange.Start);
 		}
 
@@ -518,7 +544,7 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 			keyword = Keyword.Other;
 			switch (exitInst) {
 				case Branch branch:
-					if (branch.TargetBlock == continueBlock) {
+					if (IsContinueBlock(branch.TargetContainer, branch.TargetBlock)) {
 						keyword = Keyword.Continue;
 						return true;
 					}
@@ -580,24 +606,19 @@ namespace ICSharpCode.Decompiler.IL.ControlFlow
 		/// Used to identify branches targetting this block as continue statements, for ordering priority.
 		/// </summary>
 		/// <returns></returns>
-		private Block GuessContinueBlock()
+		private static bool IsContinueBlock(BlockContainer container, Block block)
 		{
-			if (currentContainer.Kind != ContainerKind.Loop)
-				return null;
+			if (container.Kind != ContainerKind.Loop)
+				return false;
 
-			// continue blocks have exactly 2 incoming edges
-			if (currentContainer.EntryPoint.IncomingEdgeCount == 2) {
-				try {
-					var forIncrement = HighLevelLoopTransform.GetIncrementBlock(currentContainer, currentContainer.EntryPoint);
-					if (forIncrement != null)
-						return forIncrement;
-				} catch (InvalidOperationException) {
-					// multiple potential increment blocks. Can get this because we don't check that the while loop
-					// has a condition first, as we don't need to do too much of HighLevelLoopTransform's job.
-				}
+			// increment blocks have exactly 2 incoming edges
+			if (container.EntryPoint.IncomingEdgeCount == 2) {
+				var forIncrement = HighLevelLoopTransform.GetIncrementBlock(container, container.EntryPoint);
+				if (forIncrement != null)
+					return block == forIncrement;
 			}
 
-			return currentContainer.EntryPoint;
+			return block == container.EntryPoint;
 		}
 
 		/// <summary>

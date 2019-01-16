@@ -21,12 +21,13 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel.Composition;
 using System.IO;
+using System.Linq;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.Util;
+using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.ILSpy.Controls;
 using ICSharpCode.ILSpy.TextView;
 using Microsoft.Win32;
-using Mono.Cecil;
 
 namespace ICSharpCode.ILSpy.TreeNodes
 {
@@ -35,9 +36,8 @@ namespace ICSharpCode.ILSpy.TreeNodes
 	{
 		public ILSpyTreeNode CreateNode(Resource resource)
 		{
-			EmbeddedResource er = resource as EmbeddedResource;
-			if (er != null && er.Name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase)) {
-				return new ResourcesFileTreeNode(er);
+			if (resource.Name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase)) {
+				return new ResourcesFileTreeNode(resource);
 			}
 			return null;
 		}
@@ -53,36 +53,33 @@ namespace ICSharpCode.ILSpy.TreeNodes
 		readonly ICollection<KeyValuePair<string, string>> stringTableEntries = new ObservableCollection<KeyValuePair<string, string>>();
 		readonly ICollection<SerializedObjectRepresentation> otherEntries = new ObservableCollection<SerializedObjectRepresentation>();
 
-		public ResourcesFileTreeNode(EmbeddedResource er)
+		public ResourcesFileTreeNode(Resource er)
 			: base(er)
 		{
 			this.LazyLoading = true;
 		}
 
-		public override object Icon
-		{
+		public override object Icon {
 			get { return Images.ResourceResourcesFile; }
 		}
 
 		protected override void LoadChildren()
 		{
-			EmbeddedResource er = this.Resource as EmbeddedResource;
-			if (er != null) {
-				Stream s = er.GetResourceStream();
-				s.Position = 0;
-				try {
-					foreach (var entry in new ResourcesFile(s)) {
-						ProcessResourceEntry(entry);
-					}
-				} catch (BadImageFormatException) {
-					// ignore errors
+			Stream s = Resource.TryOpenStream();
+			if (s == null) return;
+			s.Position = 0;
+			try {
+				foreach (var entry in new ResourcesFile(s).OrderBy(e => e.Key, NaturalStringComparer.Instance)) {
+					ProcessResourceEntry(entry);
 				}
+			} catch (BadImageFormatException) {
+				// ignore errors
 			}
 		}
 
 		private void ProcessResourceEntry(KeyValuePair<string, object> entry)
 		{
-			if (entry.Value is String) {
+			if (entry.Value is string) {
 				stringTableEntries.Add(new KeyValuePair<string, string>(entry.Key, (string)entry.Value));
 				return;
 			}
@@ -106,35 +103,32 @@ namespace ICSharpCode.ILSpy.TreeNodes
 				otherEntries.Add(new SerializedObjectRepresentation(entry.Key, entry.Value.GetType().FullName, entry.Value.ToString()));
 			}
 		}
-		
+
 		public override bool Save(DecompilerTextView textView)
 		{
-			EmbeddedResource er = this.Resource as EmbeddedResource;
-			if (er != null) {
-				SaveFileDialog dlg = new SaveFileDialog();
-				dlg.FileName = DecompilerTextView.CleanUpName(er.Name);
-				dlg.Filter = "Resources file (*.resources)|*.resources|Resource XML file|*.resx";
-				if (dlg.ShowDialog() == true) {
-					Stream s = er.GetResourceStream();
-					s.Position = 0;
-					switch (dlg.FilterIndex) {
-						case 1:
-							using (var fs = dlg.OpenFile()) {
-								s.CopyTo(fs);
+			Stream s = Resource.TryOpenStream();
+			if (s == null) return false;
+			SaveFileDialog dlg = new SaveFileDialog();
+			dlg.FileName = DecompilerTextView.CleanUpName(Resource.Name);
+			dlg.Filter = "Resources file (*.resources)|*.resources|Resource XML file|*.resx";
+			if (dlg.ShowDialog() == true) {
+				s.Position = 0;
+				switch (dlg.FilterIndex) {
+					case 1:
+						using (var fs = dlg.OpenFile()) {
+							s.CopyTo(fs);
+						}
+						break;
+					case 2:
+						using (var writer = new ResXResourceWriter(dlg.OpenFile())) {
+							foreach (var entry in new ResourcesFile(s)) {
+								writer.AddResource(entry.Key, entry.Value);
 							}
-							break;
-						case 2:
-							using (var writer = new ResXResourceWriter(dlg.OpenFile())) {
-								foreach (var entry in new ResourcesFile(s)) {
-									writer.AddResource(entry.Key, entry.Value);
-								}
-							}
-							break;
-					}
+						}
+						break;
 				}
-				return true;
 			}
-			return false;
+			return true;
 		}
 
 		public override void Decompile(Language language, ITextOutput output, DecompilationOptions options)

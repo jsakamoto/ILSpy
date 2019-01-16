@@ -23,6 +23,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,11 +34,13 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.Documentation;
+using ICSharpCode.Decompiler.Metadata;
+using ICSharpCode.Decompiler.TypeSystem;
+using ICSharpCode.Decompiler.TypeSystem.Implementation;
 using ICSharpCode.ILSpy.TextView;
 using ICSharpCode.ILSpy.TreeNodes;
 using ICSharpCode.TreeView;
 using Microsoft.Win32;
-using Mono.Cecil;
 
 namespace ICSharpCode.ILSpy
 {
@@ -46,6 +49,7 @@ namespace ICSharpCode.ILSpy
 	/// </summary>
 	partial class MainWindow : Window
 	{
+		bool refreshInProgress;
 		readonly NavigationHistory<NavigationState> history = new NavigationHistory<NavigationState>();
 		ILSpySettings spySettings;
 		internal SessionSettings sessionSettings;
@@ -284,11 +288,25 @@ namespace ICSharpCode.ILSpy
 						}
 					}
 				} else {
+					ITypeReference typeRef = null;
+					IMemberReference memberRef = null;
+					if (args.NavigateTo.StartsWith("T:", StringComparison.Ordinal)) {
+						typeRef = IdStringProvider.ParseTypeName(args.NavigateTo);
+					} else {
+						memberRef = IdStringProvider.ParseMemberIdString(args.NavigateTo);
+						typeRef = memberRef.DeclaringTypeReference;
+					}
 					foreach (LoadedAssembly asm in commandLineLoadedAssemblies) {
-						ModuleDefinition def = asm.GetModuleDefinitionOrNull();
-						if (def != null) {
-							MemberReference mr = XmlDocKeyProvider.FindMemberByKey(def, args.NavigateTo);
-							if (mr != null) {
+						var module = asm.GetPEFileOrNull();
+						if (CanResolveTypeInPEFile(module, typeRef, out var typeHandle)) {
+							IEntity mr = null;
+							ICompilation compilation = typeHandle.Kind == HandleKind.ExportedType
+								? new DecompilerTypeSystem(module, module.GetAssemblyResolver())
+								: new SimpleCompilation(module, MinimalCorlib.Instance);
+							mr = memberRef == null
+								? typeRef.Resolve(new SimpleTypeResolveContext(compilation)) as ITypeDefinition
+								: (IEntity)memberRef.Resolve(new SimpleTypeResolveContext(compilation));
+							if (mr != null && mr.ParentModule.PEFile != null) {
 								found = true;
 								// Defer JumpToReference call to allow an assembly that was loaded while
 								// resolving a type-forwarder in FindMemberByKey to appear in the assembly list.
@@ -306,7 +324,7 @@ namespace ICSharpCode.ILSpy
 			} else if (commandLineLoadedAssemblies.Count == 1) {
 				// NavigateTo == null and an assembly was given on the command-line:
 				// Select the newly loaded assembly
-				JumpToReference(commandLineLoadedAssemblies[0].GetModuleDefinitionOrNull());
+				JumpToReference(commandLineLoadedAssemblies[0].GetPEFileOrNull());
 			}
 			if (args.Search != null)
 			{
@@ -314,6 +332,30 @@ namespace ICSharpCode.ILSpy
 				SearchPane.Instance.Show();
 			}
 			commandLineLoadedAssemblies.Clear(); // clear references once we don't need them anymore
+		}
+
+		private bool CanResolveTypeInPEFile(PEFile module, ITypeReference typeRef, out EntityHandle typeHandle)
+		{
+			switch (typeRef) {
+				case GetPotentiallyNestedClassTypeReference topLevelType:
+					typeHandle = topLevelType.ResolveInPEFile(module);
+					return !typeHandle.IsNil;
+				case NestedTypeReference nestedType:
+					if (!CanResolveTypeInPEFile(module, nestedType.DeclaringTypeReference, out typeHandle))
+						return false;
+					if (typeHandle.Kind == HandleKind.ExportedType)
+						return true;
+					var typeDef = module.Metadata.GetTypeDefinition((TypeDefinitionHandle)typeHandle);
+					typeHandle = typeDef.GetNestedTypes().FirstOrDefault(t => {
+						var td = module.Metadata.GetTypeDefinition(t);
+						var typeName = ReflectionHelper.SplitTypeParameterCountFromReflectionName(module.Metadata.GetString(td.Name), out int typeParameterCount);
+						return nestedType.AdditionalTypeParameterCount == typeParameterCount && nestedType.Name == typeName;
+					});
+					return !typeHandle.IsNil;
+				default:
+					typeHandle = default;
+					return false;
+			}
 		}
 
 		void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -594,41 +636,23 @@ namespace ICSharpCode.ILSpy
 		
 		public ILSpyTreeNode FindTreeNode(object reference)
 		{
-			if (reference is TypeReference)
-			{
-				return assemblyListTreeNode.FindTypeNode(((TypeReference)reference).Resolve());
-			}
-			else if (reference is MethodReference)
-			{
-				return assemblyListTreeNode.FindMethodNode(((MethodReference)reference).Resolve());
-			}
-			else if (reference is FieldReference)
-			{
-				return assemblyListTreeNode.FindFieldNode(((FieldReference)reference).Resolve());
-			}
-			else if (reference is PropertyReference)
-			{
-				return assemblyListTreeNode.FindPropertyNode(((PropertyReference)reference).Resolve());
-			}
-			else if (reference is EventReference)
-			{
-				return assemblyListTreeNode.FindEventNode(((EventReference)reference).Resolve());
-			}
-			else if (reference is AssemblyDefinition)
-			{
-				return assemblyListTreeNode.FindAssemblyNode((AssemblyDefinition)reference);
-			}
-			else if (reference is ModuleDefinition)
-			{
-				return assemblyListTreeNode.FindAssemblyNode((ModuleDefinition)reference);
-			}
-			else if (reference is Resource)
-			{
-				return assemblyListTreeNode.FindResourceNode((Resource)reference);
-			}
-			else
-			{
-				return null;
+			switch (reference) {
+				case PEFile asm:
+					return assemblyListTreeNode.FindAssemblyNode(asm);
+				case Resource res:
+					return assemblyListTreeNode.FindResourceNode(res);
+				case ITypeDefinition type:
+					return assemblyListTreeNode.FindTypeNode(type);
+				case IField fd:
+					return assemblyListTreeNode.FindFieldNode(fd);
+				case IMethod md:
+					return assemblyListTreeNode.FindMethodNode(md);
+				case IProperty pd:
+					return assemblyListTreeNode.FindPropertyNode(pd);
+				case IEvent ed:
+					return assemblyListTreeNode.FindEventNode(ed);
+				default:
+					return null;
 			}
 		}
 		
@@ -647,12 +671,20 @@ namespace ICSharpCode.ILSpy
 		public Task JumpToReferenceAsync(object reference)
 		{
 			decompilationTask = TaskHelper.CompletedTask;
-			ILSpyTreeNode treeNode = FindTreeNode(reference);
-			if (treeNode != null) {
-				SelectNode(treeNode);
-			} else if (reference is Mono.Cecil.Cil.OpCode) {
-				string link = "http://msdn.microsoft.com/library/system.reflection.emit.opcodes." + ((Mono.Cecil.Cil.OpCode)reference).Code.ToString().ToLowerInvariant() + ".aspx";
-				OpenLink(link);
+			switch (reference) {
+				case Decompiler.Disassembler.OpCodeInfo opCode:
+					OpenLink(opCode.Link);
+					break;
+				case ValueTuple<PEFile, System.Reflection.Metadata.EntityHandle> unresolvedEntity:
+					var typeSystem = new DecompilerTypeSystem(unresolvedEntity.Item1, unresolvedEntity.Item1.GetAssemblyResolver(),
+						TypeSystemOptions.Default | TypeSystemOptions.Uncached);
+					reference = typeSystem.MainModule.ResolveEntity(unresolvedEntity.Item2);
+					goto default;
+				default:
+					ILSpyTreeNode treeNode = FindTreeNode(reference);
+					if (treeNode != null)
+						SelectNode(treeNode);
+					break;
 			}
 			return decompilationTask;
 		}
@@ -668,8 +700,20 @@ namespace ICSharpCode.ILSpy
 				// just ignore all of them.
 			}
 		}
+
+		public static void ExecuteCommand(string fileName, string arguments)
+		{
+			try {
+				Process.Start(fileName, arguments);
+#pragma warning disable RECS0022 // A catch clause that catches System.Exception and has an empty body
+			} catch (Exception) {
+#pragma warning restore RECS0022 // A catch clause that catches System.Exception and has an empty body
+				// Process.Start can throw several errors (not all of them documented),
+				// just ignore all of them.
+			}
+		}
 		#endregion
-		
+
 		#region Open/Refresh
 		void OpenCommandExecuted(object sender, ExecutedRoutedEventArgs e)
 		{
@@ -743,9 +787,14 @@ namespace ICSharpCode.ILSpy
 		
 		void RefreshCommandExecuted(object sender, ExecutedRoutedEventArgs e)
 		{
-			var path = GetPathForNode(treeView.SelectedItem as SharpTreeNode);
-			ShowAssemblyList(assemblyListManager.LoadList(ILSpySettings.Load(), assemblyList.ListName));
-			SelectNode(FindNodeByPath(path, true));
+			try {
+				refreshInProgress = true;
+				var path = GetPathForNode(treeView.SelectedItem as SharpTreeNode);
+				ShowAssemblyList(assemblyListManager.LoadList(ILSpySettings.Load(), assemblyList.ListName));
+				SelectNode(FindNodeByPath(path, true));
+			} finally {
+				refreshInProgress = false;
+			}
 		}
 		
 		void SearchCommandExecuted(object sender, ExecutedRoutedEventArgs e)
@@ -769,6 +818,9 @@ namespace ICSharpCode.ILSpy
 		void DecompileSelectedNodes(DecompilerTextViewState state = null, bool recordHistory = true)
 		{
 			if (ignoreDecompilationRequests)
+				return;
+
+			if (treeView.SelectedItems.Count == 0 && refreshInProgress)
 				return;
 			
 			if (recordHistory) {
@@ -799,7 +851,12 @@ namespace ICSharpCode.ILSpy
 		
 		public void RefreshDecompiledView()
 		{
-			DecompileSelectedNodes();
+			try {
+				refreshInProgress = true;
+				DecompileSelectedNodes();
+			} finally {
+				refreshInProgress = false;
+			}
 		}
 		
 		public DecompilerTextView TextView {

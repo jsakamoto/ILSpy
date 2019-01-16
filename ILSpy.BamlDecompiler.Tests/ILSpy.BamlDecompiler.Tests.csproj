@@ -33,14 +33,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NUnit" Version="3.9.0" />
+    <PackageReference Include="NUnit" Version="3.11.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ICSharpCode.Decompiler.Tests\ICSharpCode.Decompiler.Tests.csproj" />
+    <ProjectReference Include="..\ILSpy.BamlDecompiler\ILSpy.BamlDecompiler.csproj" />
     <ProjectReference Include="..\ILSpy\ILSpy.csproj" />
     <ProjectReference Include="..\SharpTreeView\ICSharpCode.TreeView.csproj" />
-    <ProjectReference Include="..\ILSpy.BamlDecompiler\ILSpy.BamlDecompiler.csproj" />
   </ItemGroup>
 
   <ItemGroup>
